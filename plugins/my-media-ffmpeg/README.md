@@ -18,8 +18,9 @@ parsers of its own written in pure Go. This plugin does the same job with FFmpeg
   and editors alike.
 
 For now the server checks each upload with its built-in parsers before it calls the plugin, so the plugin receives the
-files the built-in processor accepts, no more. Accepting more, such as fragmented MP4, needs a change in mycroblog/my,
-which we have asked for; this plugin will take them once the server sends them.
+files the built-in processor accepts, no more. Accepting more, such as fragmented MP4, needs a change in mycroblog/my, which will
+follow the one for images ([mycroblog/my#3493](https://github.com/mycroblog/my/issues/3493)); this plugin will take them
+once the server sends them.
 
 The plugin **remuxes**: it writes the same video and audio streams again, in the same container, without the metadata.
 It never transcodes, so the quality and the size stay as they were, and a call takes about as long as reading the file.

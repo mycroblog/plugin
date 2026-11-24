@@ -106,7 +106,7 @@ The server runs at most two image calls at once. Raise `-concurrency` only when 
 The plugin reads the format from the file's content, never from its name, and hands ImageMagick only these four.
 
 These four are all the server sends for now: it checks each upload with its built-in processor before it calls the
-plugin. Accepting more, such as AVIF, HEIC, and animated PNG, needs a change in mycroblog/my, which we have asked for; this
+plugin. Accepting more, such as AVIF, HEIC, and animated PNG, needs a change in mycroblog/my ([mycroblog/my#3493](https://github.com/mycroblog/my/issues/3493)); this
 plugin will take them once the server sends them.
 
 ### Outputs
