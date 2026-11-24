@@ -104,9 +104,8 @@ GOWORK=off go run -C tools ./cmd/contract -root .. -plugin my-media-imagemagick 
    `github.com/mycroblog/plugin/plugins/my-<kind>-<implementation>`, which requires `github.com/mycroblog/plugin` and
    replaces it with `../..`, like the existing plugins.
 2. Write `main.go`, a `Dockerfile` with the stages `deps`, `test`, and `runtime`, and a `plugin.yaml`.
-3. Add its directory to `.github/dependabot.yml`, under `gomod` and `docker`.
 
-CI picks the plugin up by itself, and tests it alone: `./scripts/lint.sh` says what is missing.
+CI and Dependabot pick the plugin up by themselves, and CI tests it alone: `./scripts/lint.sh` says what is missing.
 
 ## Releases
 

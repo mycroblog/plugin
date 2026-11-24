@@ -1,8 +1,9 @@
 # Dependabot version updates. Security alerts come from the repository's Dependabot Alerts.
 #
-# Each module, each plugin's image, and the workflows have an entry of their own, so that an update is a pull request of
-# its own, and CI tests what it affects only (tools/affected): a dependency of one plugin never waits for, nor breaks,
-# another. scripts/lint.sh checks that every plugin is listed under gomod and docker.
+# The root module, tools/, the plugins, their images, and the workflows have an entry each. The plugins' entries match
+# every plugin with a glob, so a new plugin needs no change here; without group-by, the updates of a group are not
+# merged across directories, so each plugin gets pull requests of its own, and CI tests what one affects only
+# (tools/affected): a dependency of one plugin never waits for, nor breaks, another.
 #
 # A plugin's go.mod replaces the root module with ../.., so an update of the root module needs the plugins' go.mod
 # tidied in the same pull request, or lint fails it: run ./scripts/tidy.sh on the branch and push.
@@ -11,7 +12,7 @@
 # at once. Minor and patch updates of an entry share one pull request; a major update opens its own.
 version: 2
 updates:
-  # Go modules: the root module, tools/, and each plugin.
+  # Go modules: the root module, tools/, and the plugins.
   - package-ecosystem: gomod
     directory: /
     schedule:
@@ -41,64 +42,33 @@ updates:
         applies-to: security-updates
         patterns: ["*"]
   - package-ecosystem: gomod
-    directory: /plugins/my-media-ffmpeg
+    directories: ["/plugins/*"]
     schedule:
       interval: weekly
     cooldown:
       default-days: 3
     groups:
-      go-my-media-ffmpeg:
+      go-plugin:
         applies-to: version-updates
         update-types: [minor, patch]
         patterns: ["*"]
-      go-my-media-ffmpeg-security:
-        applies-to: security-updates
-        patterns: ["*"]
-  - package-ecosystem: gomod
-    directory: /plugins/my-media-imagemagick
-    schedule:
-      interval: weekly
-    cooldown:
-      default-days: 3
-    groups:
-      go-my-media-imagemagick:
-        applies-to: version-updates
-        update-types: [minor, patch]
-        patterns: ["*"]
-      go-my-media-imagemagick-security:
+      go-plugin-security:
         applies-to: security-updates
         patterns: ["*"]
   # The images of the plugins. The golang tag must match .tool-versions (scripts/lint.sh), so it is raised by hand;
   # Dependabot raises the digest of the distribution.
   - package-ecosystem: docker
-    directory: /plugins/my-media-ffmpeg
+    directories: ["/plugins/*"]
     schedule:
       interval: weekly
     cooldown:
       default-days: 3
     groups:
-      docker-my-media-ffmpeg:
+      docker-plugin:
         applies-to: version-updates
         update-types: [minor, patch]
         patterns: ["*"]
-      docker-my-media-ffmpeg-security:
-        applies-to: security-updates
-        patterns: ["*"]
-    ignore:
-      - dependency-name: golang
-        update-types: ["version-update:semver-major", "version-update:semver-minor", "version-update:semver-patch"]
-  - package-ecosystem: docker
-    directory: /plugins/my-media-imagemagick
-    schedule:
-      interval: weekly
-    cooldown:
-      default-days: 3
-    groups:
-      docker-my-media-imagemagick:
-        applies-to: version-updates
-        update-types: [minor, patch]
-        patterns: ["*"]
-      docker-my-media-imagemagick-security:
+      docker-plugin-security:
         applies-to: security-updates
         patterns: ["*"]
     ignore:

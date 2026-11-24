@@ -1,6 +1,6 @@
 #!/bin/sh
 # The static checks of CI: formatting, go vet with depcheck, tidy go.mod files, each plugin on the root module of
-# its commit and in the Dependabot configuration, and one Go version everywhere.
+# its commit, and one Go version everywhere.
 set -eu
 cd "$(dirname "$0")/.."
 status=0
@@ -23,17 +23,11 @@ for dir in . tools plugins/*/; do
 	(cd "$dir" && go mod tidy -diff) || fail "${dir%/}/go.mod is not tidy: run (cd ${dir%/} && GOWORK=off go mod tidy)"
 done
 
-# Each plugin builds with the root module of the same commit, and Dependabot updates each module on its own.
+# Each plugin builds with the root module of the same commit.
 for dir in plugins/*/; do
 	[ -f "$dir/go.mod" ] || continue
-	name="$(basename "$dir")"
 	go mod edit -json "$dir/go.mod" | grep -q '"Path": "\.\./\.\."' ||
 		fail "$dir/go.mod does not replace github.com/mycroblog/plugin with ../.."
-	for ecosystem in gomod docker; do
-		awk -v e="$ecosystem" '/package-ecosystem:/ { on = ($3 == e) } on' .github/dependabot.yml |
-			grep -q "^ *directory: /plugins/$name\$" ||
-			fail ".github/dependabot.yml does not list /plugins/$name under $ecosystem"
-	done
 done
 
 want="$(awk '$1 == "golang" { print $2 }' .tool-versions)"
