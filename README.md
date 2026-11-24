@@ -106,3 +106,4 @@ Each module is versioned on its own. The root takes tags like `v0.1.0`, a plugin
 ## License
 
 [MIT](LICENSE). The protocol definitions in `gen/` are generated from mycroblog/my, also under the MIT License.
+
