@@ -1,0 +1,11 @@
+# What CI checks of this plugin against the contract of mycroblog/my: `my plugin test`, at the version buf.gen.yaml pins.
+# probe, which every plugin serves, is always checked.
+kinds:
+  - media_video
+  - media_audio
+
+# Cases that fail because of mycroblog/my, each with its issue there. CI fails when one of them passes, so that the
+# entry goes once the issue is fixed.
+known_failures:
+  - case: media_video/remux_video
+    issue: https://github.com/mycroblog/my/issues/3494

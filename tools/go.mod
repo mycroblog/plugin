@@ -4,7 +4,10 @@ go 1.27.4
 
 tool github.com/bufbuild/buf/cmd/buf
 
-require golang.org/x/tools v0.53.0
+require (
+	go.yaml.in/yaml/v3 v3.0.5
+	golang.org/x/tools v0.53.0
+)
 
 require (
 	buf.build/gen/go/bufbuild/bufplugin/protocolbuffers/go v1.36.12-20261002170247-538130002972.2 // indirect
@@ -82,7 +85,6 @@ require (
 	go.opentelemetry.io/otel/trace v1.47.0 // indirect
 	go.uber.org/multierr v1.11.0 // indirect
 	go.uber.org/zap v1.28.0 // indirect
-	go.yaml.in/yaml/v3 v3.0.5 // indirect
 	golang.org/x/crypto v0.59.0 // indirect
 	golang.org/x/exp v0.0.0-20261014143641-f0251eb4aa3e // indirect
 	golang.org/x/mod v0.43.0 // indirect

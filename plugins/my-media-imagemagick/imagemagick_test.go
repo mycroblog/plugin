@@ -27,11 +27,11 @@ func converter(t *testing.T) *Converter {
 	t.Helper()
 	magick, err := exec.LookPath("magick")
 	if err != nil {
-		t.Skip("ImageMagick 7 (magick) is not installed")
+		skip(t, "ImageMagick 7 (magick) is not installed")
 	}
 	c := &Converter{Magick: magick, SRGBProfile: "/usr/share/color/icc/sRGB.icc", WebPQuality: 80, JPEGQuality: 85}
 	if err := c.check(); err != nil {
-		t.Skipf("ImageMagick is not usable: %v", err)
+		skip(t, fmt.Sprintf("ImageMagick is not usable: %v", err))
 	}
 	return c
 }
@@ -353,4 +353,14 @@ func iccProfile(t *testing.T) []byte {
 		}
 	}
 	return nil
+}
+
+// skip skips a test that needs the plugin's tools, unless MY_PLUGIN_REQUIRE_TOOLS is set, as in the test stage of the
+// Dockerfile, where a missing tool is a failure: CI must never pass by skipping.
+func skip(t *testing.T, why string) {
+	t.Helper()
+	if os.Getenv("MY_PLUGIN_REQUIRE_TOOLS") != "" {
+		t.Fatal(why + ", and MY_PLUGIN_REQUIRE_TOOLS is set")
+	}
+	t.Skip(why)
 }
