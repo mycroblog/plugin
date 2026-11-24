@@ -36,6 +36,21 @@ go build ./... ./plugins/my-media-imagemagick ./plugins/my-media-ffmpeg
 go test ./... ./plugins/my-media-imagemagick ./plugins/my-media-ffmpeg
 ```
 
+### Static checks
+
+```sh
+./scripts/vet.sh
+```
+
+It runs `go vet` and [depcheck](tools/depcheck) over every module. depcheck keeps the imports between the packages of
+this repository in their direction, because CI decides what to test from the import graph:
+
+- the root module does not import `plugins/`, and a plugin does not import another plugin;
+- `internal/server`, the transport, imports no protocol package;
+- `internal/<kind>` imports, of `gen/`, only its own kind, and no other `internal/` package but the shared ones;
+- `gen/` imports only `gen/`, and nothing outside `tools/` imports `tools/`;
+- an `internal/` package is either of a protocol kind or listed as shared in depcheck, named by what it does.
+
 ### Regenerating the protocol code
 
 ```sh
