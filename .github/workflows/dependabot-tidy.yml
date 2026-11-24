@@ -1,0 +1,66 @@
+# Tidies the modules of a Dependabot pull request. A plugin's go.mod replaces the root module with ../.., so raising a
+# dependency of the root module changes the plugins' go.mod too, which Dependabot, updating each module on its own, does
+# not do: without this, lint would fail every such pull request.
+#
+# It runs for Dependabot's own pull requests only, from a branch of this repository, triggered by Dependabot itself (a
+# push by anyone else to the branch does not run it), and it runs go mod tidy only: no code of the dependencies. A push
+# with GITHUB_TOKEN starts no workflow, so it starts CI on the branch itself; the required check, gate, is matched on
+# the commit, whatever started the run.
+name: Tidy Dependabot updates
+
+on:
+  pull_request:
+    paths:
+      - "**/go.mod"
+      - "**/go.sum"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dependabot-tidy-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+env:
+  GOTOOLCHAIN: local
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  tidy:
+    if: >-
+      github.actor == 'dependabot[bot]' &&
+      github.event.pull_request.user.login == 'dependabot[bot]' &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: .tool-versions
+          cache-dependency-path: |
+            go.sum
+            tools/go.sum
+            plugins/*/go.sum
+      - run: ./scripts/tidy.sh
+      - name: Commit and push what tidy changed, and start CI on it
+        env:
+          BRANCH: ${{ github.event.pull_request.head.ref }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if git diff --quiet; then
+            echo "Every module is tidy."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -am "chore(deps): tidy every module" -m "./scripts/tidy.sh, after the update of Dependabot."
+          git push origin "HEAD:$BRANCH"
+          gh workflow run ci.yml --ref "$BRANCH"

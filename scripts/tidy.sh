@@ -1,7 +1,7 @@
 #!/bin/sh
 # Tidies every module on its own (GOWORK=off): the root module, tools/, and each plugin. A plugin replaces the root module
 # with ../.., so raising a dependency of the root module changes the plugins' go.mod too: run this after such a change,
-# a Dependabot one included, and commit what it changes.
+# and commit what it changes. The workflow dependabot-tidy runs it on Dependabot's pull requests.
 set -eu
 cd "$(dirname "$0")/.."
 export GOWORK=off

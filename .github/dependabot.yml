@@ -6,7 +6,7 @@
 # (tools/affected).
 #
 # A plugin's go.mod replaces the root module with ../.., so an update of the root module needs the plugins' go.mod
-# tidied in the same pull request, or lint fails it: run ./scripts/tidy.sh on the branch and push.
+# tidied in the same pull request: the workflow dependabot-tidy does it, and starts CI on the result.
 #
 # The 3-day cooldown, as mycroblog/my has it, keeps a release younger than three days out; security updates still open
 # at once. Minor and patch updates share a group; a major update opens its own pull request.
