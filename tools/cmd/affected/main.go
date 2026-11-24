@@ -1,6 +1,7 @@
 // Command affected prints what CI tests for the change since a revision, as JSON:
 //
 //	affected -base origin/main
+//	affected -all
 //
 // With -github-output, it also writes each field of the result to $GITHUB_OUTPUT, as the outputs of a step.
 package main
@@ -18,10 +19,17 @@ import (
 func main() {
 	base := flag.String("base", "origin/main", "the revision the change is compared to, from its merge base with HEAD")
 	root := flag.String("root", ".", "the repository, checked out at the head of the change")
+	all := flag.Bool("all", false, "test everything, whatever changed")
 	githubOutput := flag.Bool("github-output", false, "also write the result to $GITHUB_OUTPUT")
 	flag.Parse()
 
-	res, err := affected.Compute(context.Background(), *root, *base)
+	var res affected.Result
+	var err error
+	if *all {
+		res, err = affected.Everything(context.Background(), *root)
+	} else {
+		res, err = affected.Compute(context.Background(), *root, *base)
+	}
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "affected:", err)
 		os.Exit(1)

@@ -1,0 +1,213 @@
+# CI tests only what a change affects. `plan` reads the import graph (tools/affected) and lists the packages of the root
+# module, the plugins, and the plugins' contracts the change reaches; each job below runs for those only, and `gate`,
+# the one required check, passes when every job that ran passed. The weekly run tests everything, for what changes
+# outside the repository: the packages of the images' distribution, and mycroblog/my at the pinned version.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "17 3 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  # Use exactly the Go version of .tool-versions; never download another toolchain.
+  GOTOOLCHAIN: local
+
+defaults:
+  run:
+    # Named, so that a step runs with -o pipefail.
+    shell: bash
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      all: ${{ steps.affected.outputs.all }}
+      packages: ${{ steps.affected.outputs.packages }}
+      plugins: ${{ steps.affected.outputs.plugins }}
+      contract: ${{ steps.affected.outputs.contract }}
+      generated: ${{ steps.generated.outputs.changed }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: .tool-versions
+          cache-dependency-path: |
+            go.sum
+            tools/go.sum
+            plugins/*/go.sum
+      - name: Choose the base of the change
+        id: base
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE_REF: ${{ github.base_ref }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          case "$EVENT" in
+            pull_request) echo "args=-base origin/$BASE_REF" >> "$GITHUB_OUTPUT" ;;
+            push)
+              # A push that creates the branch has no before; test everything.
+              if [ -z "$BEFORE" ] || [ "$BEFORE" = 0000000000000000000000000000000000000000 ]; then
+                echo "args=-all" >> "$GITHUB_OUTPUT"
+              else
+                echo "args=-base $BEFORE" >> "$GITHUB_OUTPUT"
+              fi ;;
+            *) echo "args=-all" >> "$GITHUB_OUTPUT" ;;
+          esac
+      - name: List what the change affects
+        id: affected
+        run: GOWORK=off go run -C tools ./cmd/affected -root .. ${{ steps.base.outputs.args }} -github-output
+      - name: Whether the generated code may be stale
+        id: generated
+        env:
+          ARGS: ${{ steps.base.outputs.args }}
+        run: |
+          if [ "$ARGS" = -all ] || git diff --name-only "${ARGS#-base }...HEAD" | grep -qE '^(buf\.gen\.yaml|gen/)'; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  lint:
+    needs: plan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: .tool-versions
+          cache-dependency-path: |
+            go.sum
+            tools/go.sum
+            plugins/*/go.sum
+      - run: ./scripts/lint.sh
+      - name: The generated code is that of buf.gen.yaml
+        if: needs.plan.outputs.generated == 'true'
+        run: |
+          ./scripts/generate.sh
+          git add -N gen
+          git diff --exit-code -- gen || { echo "gen/ is stale: run ./scripts/generate.sh"; exit 1; }
+
+  unit:
+    needs: plan
+    if: needs.plan.outputs.packages != '[]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: .tool-versions
+          cache-dependency-path: go.sum
+      - name: Test the affected packages of the root module
+        env:
+          PACKAGES: ${{ needs.plan.outputs.packages }}
+        run: jq -r '.[]' <<< "$PACKAGES" | GOWORK=off xargs go test -race -count=1
+
+  tools:
+    needs: plan
+    # The tests of the harness itself, which a change of tools/ (among others) triggers by affecting everything.
+    if: needs.plan.outputs.all == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: .tool-versions
+          cache-dependency-path: tools/go.sum
+      - run: GOWORK=off go test -C tools -race -count=1 ./...
+
+  plugin:
+    needs: plan
+    if: needs.plan.outputs.plugins != '[]'
+    strategy:
+      fail-fast: false
+      matrix:
+        plugin: ${{ fromJSON(needs.plan.outputs.plugins) }}
+    name: plugin (${{ matrix.plugin }})
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Integration tests, in the test stage of the image
+        env:
+          PLUGIN: ${{ matrix.plugin }}
+        run: |
+          docker build --target test -t "test-$PLUGIN" -f "plugins/$PLUGIN/Dockerfile" .
+          docker run --rm "test-$PLUGIN"
+      - name: The runtime image builds
+        env:
+          PLUGIN: ${{ matrix.plugin }}
+        run: docker build -t "$PLUGIN" -f "plugins/$PLUGIN/Dockerfile" .
+
+  contract:
+    needs: plan
+    if: needs.plan.outputs.contract != '[]'
+    strategy:
+      fail-fast: false
+      matrix:
+        plugin: ${{ fromJSON(needs.plan.outputs.contract) }}
+    name: contract (${{ matrix.plugin }})
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: .tool-versions
+          cache-dependency-path: tools/go.sum
+      - name: The version of mycroblog/my that buf.gen.yaml pins
+        id: pin
+        run: echo "tag=$(awk '$1 == "tag:" { print $2 }' buf.gen.yaml)" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        id: my-cache
+        with:
+          path: ${{ runner.temp }}/bin/my
+          key: my-${{ runner.os }}-${{ steps.pin.outputs.tag }}
+      - name: Build my at that version
+        if: steps.my-cache.outputs.cache-hit != 'true'
+        env:
+          TAG: ${{ steps.pin.outputs.tag }}
+        run: |
+          git clone --quiet --depth 1 --branch "$TAG" https://github.com/mycroblog/my.git "$RUNNER_TEMP/my"
+          CGO_ENABLED=0 GOWORK=off go build -C "$RUNNER_TEMP/my" -o "$RUNNER_TEMP/bin/my" ./cmd/my
+      - name: Build the runtime image
+        env:
+          PLUGIN: ${{ matrix.plugin }}
+        run: docker build -t "$PLUGIN" -f "plugins/$PLUGIN/Dockerfile" .
+      - name: Run the contract tests
+        env:
+          PLUGIN: ${{ matrix.plugin }}
+        run: GOWORK=off go run -C tools ./cmd/contract -root .. -plugin "$PLUGIN" -image "$PLUGIN" -my "$RUNNER_TEMP/bin/my"
+
+  gate:
+    needs: [plan, lint, unit, tools, plugin, contract]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Every job that ran passed
+        env:
+          RESULTS: ${{ toJSON(needs.*.result) }}
+        run: |
+          echo "$RESULTS"
+          ! jq -e 'any(.[]; . != "success" and . != "skipped")' <<< "$RESULTS" > /dev/null

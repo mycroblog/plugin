@@ -52,6 +52,19 @@ var harness = []string{".github/workflows/", "tools/", "scripts/", ".tool-versio
 // contractPin is the file that pins the version of the contract the plugins are tested against.
 const contractPin = "buf.gen.yaml"
 
+// Everything returns everything to test, as for a change of the harness: for the scheduled and manual runs.
+func Everything(ctx context.Context, root string) (Result, error) {
+	root, err := filepath.Abs(root)
+	if err != nil {
+		return Result{}, err
+	}
+	plugins, err := pluginNames(root)
+	if err != nil {
+		return Result{}, err
+	}
+	return everything(ctx, root, plugins)
+}
+
 // Compute returns what to test in the repository at root, checked out at the head of the change, for the change since
 // base: a revision, compared from its merge base with HEAD, working tree included.
 func Compute(ctx context.Context, root, base string) (Result, error) {
