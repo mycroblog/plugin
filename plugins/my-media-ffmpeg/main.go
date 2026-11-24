@@ -79,4 +79,3 @@ func (r *Remuxer) check() error {
 	}
 	return errors.Join(errs...)
 }
-
