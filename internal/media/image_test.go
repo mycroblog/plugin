@@ -27,6 +27,26 @@ func TestSniffImage(t *testing.T) {
 	}
 }
 
+func TestSniffAV(t *testing.T) {
+	for _, tt := range []struct {
+		head string
+		want mediav1.Format
+	}{
+		{"\x00\x00\x00\x20ftypisom", mediav1.Format_FORMAT_MP4},
+		{"\x00\x00\x00\x14ftypqt  ", mediav1.Format_FORMAT_MP4},
+		{"\x1A\x45\xDF\xA3\x9F\x42\x86\x81\x01\x42\x82\x84webm", mediav1.Format_FORMAT_WEBM},
+		{"\x1A\x45\xDF\xA3\x9F\x42\x86\x81\x01\x42\x82\x88matroska", mediav1.Format_FORMAT_UNSPECIFIED},
+		{"OggS\x00\x02", mediav1.Format_FORMAT_OGG},
+		{"ID3\x04\x00", mediav1.Format_FORMAT_MP3},
+		{"\xFF\xFB\x90\x64", mediav1.Format_FORMAT_MP3},
+		{"RIFF\x00\x00\x00\x00WAVE", mediav1.Format_FORMAT_UNSPECIFIED},
+	} {
+		if got := SniffAV([]byte(tt.head)); got != tt.want {
+			t.Errorf("SniffAV(%q) = %v, want %v", tt.head, got, tt.want)
+		}
+	}
+}
+
 func TestPlan(t *testing.T) {
 	for _, tt := range []struct {
 		name   string
