@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -24,10 +25,10 @@ func remuxer(t *testing.T) *Remuxer {
 	t.Helper()
 	r := &Remuxer{FFmpeg: "ffmpeg", FFprobe: "ffprobe"}
 	if _, err := exec.LookPath("ffmpeg"); err != nil {
-		t.Skip("FFmpeg is not installed")
+		skip(t, "FFmpeg is not installed")
 	}
 	if err := r.check(); err != nil {
-		t.Skipf("FFmpeg is not usable: %v", err)
+		skip(t, fmt.Sprintf("FFmpeg is not usable: %v", err))
 	}
 	return r
 }
@@ -243,4 +244,14 @@ func TestRefused(t *testing.T) {
 			}
 		})
 	}
+}
+
+// skip skips a test that needs the plugin's tools, unless MY_PLUGIN_REQUIRE_TOOLS is set, as in the test stage of the
+// Dockerfile, where a missing tool is a failure: CI must never pass by skipping.
+func skip(t *testing.T, why string) {
+	t.Helper()
+	if os.Getenv("MY_PLUGIN_REQUIRE_TOOLS") != "" {
+		t.Fatal(why + ", and MY_PLUGIN_REQUIRE_TOOLS is set")
+	}
+	t.Skip(why)
 }

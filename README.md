@@ -67,20 +67,37 @@ go run ./plugins/my-media-imagemagick -address http://127.0.0.1:8080
 
 Flags: `-address` (`unix:///path`, `http://host:port`, `https://host:port`), `-tls-cert-file`, `-tls-key-file`, `-tls-client-ca-file` (mutual TLS), `-token-file` (bearer token; unix:// and https:// only), `-shutdown-timeout`.
 
-### Container images
+### Container images and integration tests
 
-Build from the repository root:
+Each plugin's Dockerfile has three stages: `deps`, what the plugin runs with; `test`, `deps` with Go; and `runtime`,
+`deps` with the plugin, the default. The integration tests run in `test`, so they see the packages and the configuration
+production runs with, and fail rather than skip when a tool is missing (`MY_PLUGIN_REQUIRE_TOOLS`). Build from the
+repository root:
 
 ```sh
+docker run --rm "$(docker build -q --target test -f plugins/my-media-imagemagick/Dockerfile .)"
 docker build -f plugins/my-media-imagemagick/Dockerfile -t my-media-imagemagick .
 docker run --rm -p 8080:8080 my-media-imagemagick
+```
+
+### Contract tests
+
+`plugins/<name>/plugin.yaml` declares the kinds a plugin serves, and the cases of the contract that fail because of
+mycroblog/my, each with its issue there. [contract](tools/contract) runs `my plugin test`, of the version
+`buf.gen.yaml` pins, against the plugin's image for probe and each kind, over a Unix socket, over a Unix socket with gRPC,
+and over plain TCP where the kind allows it. It fails on a failing case plugin.yaml does not list, and on a listed one
+that passes or no longer runs.
+
+```sh
+GOWORK=off go run -C tools ./cmd/contract -root .. -plugin my-media-imagemagick -image my-media-imagemagick -my ./my
 ```
 
 ## Adding a plugin
 
 1. Create `plugins/my-<kind>-<implementation>/` with a `go.mod` whose module path is `github.com/mycroblog/plugin/plugins/my-<kind>-<implementation>`.
 2. Add it to `go.work` (`go work use ./plugins/...`).
-3. Write `main.go` and a `Dockerfile` like the existing plugins.
+3. Write `main.go`, a `Dockerfile` with the stages `deps`, `test`, and `runtime`, and a `plugin.yaml`, like the
+   existing plugins.
 
 ## Releases
 
