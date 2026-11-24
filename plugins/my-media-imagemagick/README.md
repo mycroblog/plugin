@@ -171,11 +171,14 @@ checks all of this at start, and refuses to start without it.
 magick -list format | grep -E '^ *(JPEG|PNG|GIF|WEBP)\*? '
 ```
 
-Install the plugin, and run it:
+Build the plugin from a checkout of this repository, which it builds with (its `go.mod` replaces the shared module with
+the checkout's), and run it:
 
 ```sh
-go install github.com/mycroblog/plugin/plugins/my-media-imagemagick@latest
-my-media-imagemagick -address unix:///run/my/media-image.sock
+git clone https://github.com/mycroblog/plugin.git
+cd plugin/plugins/my-media-imagemagick
+GOWORK=off go build -o my-media-imagemagick .
+./my-media-imagemagick -address unix:///run/my/media-image.sock
 ```
 
 The container image ships a [`policy.xml`](policy.xml) that disables every ImageMagick coder but the four above, the

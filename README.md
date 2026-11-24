@@ -14,26 +14,32 @@ Each plugin's README says how to run it and what it does. Every plugin also serv
 ```
 .
 ├── go.mod            # github.com/mycroblog/plugin: the code the plugins share
-├── go.work           # ties the root and the plugin modules together for development
 ├── buf.gen.yaml      # generates gen/ from the .proto files of mycroblog/my at a pinned tag
 ├── gen/              # generated code of the plugin protocol (do not edit)
 ├── internal/
 │   ├── server/       # listener (unix://, http://, https://), HTTP/2, mutual TLS, bearer token, shutdown
 │   ├── probe/        # the probe kind
 │   └── media/        # the shared half of the media kinds
-├── plugins/          # one Go module per plugin, each with its own dependencies, Dockerfile, and releases
-└── tools/            # buf, kept in a module of its own so its dependencies stay out of the root
+├── plugins/          # one Go module per plugin, each with its own dependencies, Dockerfile, and plugin.yaml
+├── scripts/          # lint, vet, tidy, generate
+└── tools/            # the CI's tools and buf, kept in a module of their own so their dependencies stay out of the root
 ```
 
 The root module stays small on purpose: a dependency one plugin needs goes in that plugin's `go.mod`, not the root's.
+Each plugin's `go.mod` requires the root module and replaces it with `../..`, so a plugin always builds with the root
+module of the same commit, and a change to both lands in one pull request. Every module builds on its own
+(`GOWORK=off`); the repository has no `go.work`, though you may make one of your own (`go work init . ./plugins/*`), which
+git ignores.
 
 ## Development
 
 Go is pinned in `.tool-versions`.
 
 ```sh
-go build ./... ./plugins/my-media-imagemagick ./plugins/my-media-ffmpeg
-go test ./... ./plugins/my-media-imagemagick ./plugins/my-media-ffmpeg
+GOWORK=off go test ./...                                # the root module
+(cd plugins/my-media-ffmpeg && GOWORK=off go test ./...) # a plugin; its integration tests need its tools, or its image
+./scripts/lint.sh                                       # everything CI checks statically
+./scripts/tidy.sh                                       # tidy every module, after changing a dependency
 ```
 
 ### Static checks
@@ -94,14 +100,17 @@ GOWORK=off go run -C tools ./cmd/contract -root .. -plugin my-media-imagemagick 
 
 ## Adding a plugin
 
-1. Create `plugins/my-<kind>-<implementation>/` with a `go.mod` whose module path is `github.com/mycroblog/plugin/plugins/my-<kind>-<implementation>`.
-2. Add it to `go.work` (`go work use ./plugins/...`).
-3. Write `main.go`, a `Dockerfile` with the stages `deps`, `test`, and `runtime`, and a `plugin.yaml`, like the
-   existing plugins.
+1. Create `plugins/my-<kind>-<implementation>/` with a `go.mod` whose module path is
+   `github.com/mycroblog/plugin/plugins/my-<kind>-<implementation>`, which requires `github.com/mycroblog/plugin` and
+   replaces it with `../..`, like the existing plugins.
+2. Write `main.go`, a `Dockerfile` with the stages `deps`, `test`, and `runtime`, and a `plugin.yaml`.
+
+CI and Dependabot pick the plugin up by themselves, and CI tests it alone: `./scripts/lint.sh` says what is missing.
 
 ## Releases
 
-Each module is versioned on its own. The root takes tags like `v0.1.0`, a plugin takes tags prefixed with its path, like `plugins/my-media-ffmpeg/v0.1.0`.
+Each plugin is released on its own, as its container image. Its `go.mod` replaces the root module with `../..`, so it
+builds from a checkout of this repository, not with `go install …@version`.
 
 ## License
 

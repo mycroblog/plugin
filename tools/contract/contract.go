@@ -10,7 +10,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"net"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -213,10 +213,13 @@ func Run(ctx context.Context, o Options) ([]Case, error) {
 	}
 	hostPort := strings.TrimSpace(strings.SplitN(string(port), "\n", 2)[0])
 	tcp := "http://" + hostPort
+	// Docker's port forwarding accepts a connection before the plugin listens, and closes it: only an answer over HTTP,
+	// any status, says the plugin is up.
+	client := &http.Client{Timeout: time.Second}
 	if err := waitFor(ctx, func() bool {
-		c, err := net.DialTimeout("tcp", hostPort, time.Second)
+		res, err := client.Get(tcp + "/")
 		if err == nil {
-			c.Close()
+			res.Body.Close()
 		}
 		return err == nil
 	}); err != nil {

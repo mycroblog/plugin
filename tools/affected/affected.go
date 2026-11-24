@@ -1,9 +1,9 @@
 // Package affected decides what CI tests for a change: the packages of the root module whose code changed, directly
 // or through what they import, and the plugins that build any such package or whose own files changed.
 //
-// It reads the import graph with go list, in the builds CI and the container images run, never the go.work of the
-// repository: the root module alone (GOWORK=off), and each plugin with the root module only (a go.work of the two).
-// A dependency that one plugin raises therefore never reaches another, nor the root module.
+// It reads the import graph with go list in the builds CI and the container images run: each module on its own
+// (GOWORK=off). A plugin's go.mod replaces the root module with ../.., so a plugin builds with the root module of the
+// same commit and nothing else, and a dependency that one plugin raises never reaches another, nor the root module.
 //
 // The code of a package changed when one of its code files changed (Go, cgo, ignored, embedded, and other files), a
 // package its code imports changed code, a module it belongs to changed version in that build, or the go or toolchain
@@ -29,7 +29,6 @@ import (
 	"path"
 	"path/filepath"
 	"slices"
-	"strconv"
 	"strings"
 )
 
@@ -46,7 +45,7 @@ type Result struct {
 }
 
 // harness are the files whose change affects everything: the CI, the tools and scripts it runs, the Go version, and
-// what the images may copy. go.work is not among them: adding a plugin changes it, and no CI build reads it.
+// what the images may copy.
 var harness = []string{".github/workflows/", "tools/", "scripts/", ".tool-versions", ".dockerignore"}
 
 // contractPin is the file that pins the version of the contract the plugins are tested against.
@@ -160,22 +159,9 @@ type build struct {
 	plugin string // the plugin's name, or "" for the root module alone
 }
 
-// env returns the environment of the build in a checkout at root: GOWORK=off for the root module, and a go.work of the
-// root module and the plugin for a plugin, written in dir.
-func (b build) env(root, dir string) ([]string, error) {
-	if b.plugin == "" {
-		return append(os.Environ(), "GOWORK=off"), nil
-	}
-	work := filepath.Join(dir, "go.work")
-	goVersion, err := goDirective(filepath.Join(root, "go.mod"))
-	if err != nil {
-		return nil, err
-	}
-	content := fmt.Sprintf("go %s\n\nuse (\n\t%s\n\t%s\n)\n", goVersion, strconv.Quote(root), strconv.Quote(filepath.Join(root, "plugins", b.plugin)))
-	if err := os.WriteFile(work, []byte(content), 0o600); err != nil {
-		return nil, err
-	}
-	return append(os.Environ(), "GOWORK="+work), nil
+// env returns the environment of the build: each module on its own, never a go.work.
+func (b build) env() []string {
+	return append(os.Environ(), "GOWORK=off")
 }
 
 type module struct {
@@ -199,16 +185,7 @@ type node struct {
 
 // list returns the packages of the build: those of its main module, with their dependencies and those of their tests.
 func (b build) list(ctx context.Context) (map[string]*node, error) {
-	tmp, err := os.MkdirTemp("", "affected-*")
-	if err != nil {
-		return nil, err
-	}
-	defer os.RemoveAll(tmp)
-	env, err := b.env(b.root, tmp)
-	if err != nil {
-		return nil, err
-	}
-	out, err := run(ctx, b.dir, env, "go", "list", "-e", "-deps", "-test", "-json", "./...")
+	out, err := run(ctx, b.dir, b.env(), "go", "list", "-e", "-deps", "-test", "-json", "./...")
 	if err != nil {
 		return nil, err
 	}
@@ -281,16 +258,7 @@ func (b build) modules(ctx context.Context, root string) (map[string]string, err
 	if _, err := os.Stat(filepath.Join(dir, "go.mod")); errors.Is(err, os.ErrNotExist) {
 		return map[string]string{}, nil // the plugin is new
 	}
-	tmp, err := os.MkdirTemp("", "affected-*")
-	if err != nil {
-		return nil, err
-	}
-	defer os.RemoveAll(tmp)
-	env, err := b.env(root, tmp)
-	if err != nil {
-		return nil, err
-	}
-	out, err := run(ctx, dir, env, "go", "list", "-m", "-json", "all")
+	out, err := run(ctx, dir, b.env(), "go", "list", "-m", "-json", "all")
 	if err != nil {
 		return nil, err
 	}
@@ -419,19 +387,6 @@ func moduleOf(dir string) string {
 		}
 	}
 	return ""
-}
-
-func goDirective(gomod string) (string, error) {
-	mod, err := os.ReadFile(gomod)
-	if err != nil {
-		return "", err
-	}
-	for line := range strings.Lines(string(mod)) {
-		if v, ok := strings.CutPrefix(strings.TrimSpace(line), "go "); ok {
-			return v, nil
-		}
-	}
-	return "", fmt.Errorf("%s has no go directive", gomod)
 }
 
 // directives returns the go and toolchain directives of a go.mod.

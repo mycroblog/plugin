@@ -1,0 +1,65 @@
+# Dependabot version updates. Security alerts come from the repository's Dependabot Alerts.
+#
+# One update of a dependency is one pull request, across every directory that has it: the Go entry covers the root
+# module, tools/, and every plugin, and the image entry every plugin's Dockerfile, each grouped by dependency name. The
+# globs match every plugin, so a new plugin needs no change here. CI then tests what the pull request affects
+# (tools/affected).
+#
+# A plugin's go.mod replaces the root module with ../.., so an update of the root module needs the plugins' go.mod
+# tidied in the same pull request: the workflow dependabot-tidy does it, and starts CI on the result.
+#
+# The 3-day cooldown, as mycroblog/my has it, keeps a release younger than three days out; security updates still open
+# at once. Minor and patch updates share a group; a major update opens its own pull request.
+version: 2
+updates:
+  - package-ecosystem: gomod
+    directories: ["/", "/tools", "/plugins/*"]
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 3
+    groups:
+      go:
+        applies-to: version-updates
+        group-by: dependency-name
+        update-types: [minor, patch]
+        patterns: ["*"]
+      go-security:
+        applies-to: security-updates
+        group-by: dependency-name
+        patterns: ["*"]
+  # The golang tag must match .tool-versions (scripts/lint.sh), so it is raised by hand; Dependabot raises the digest of
+  # the distribution, the only thing that moves under a pinned tag, so every update of an image is grouped.
+  - package-ecosystem: docker
+    directories: ["/plugins/*"]
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 3
+    groups:
+      docker:
+        applies-to: version-updates
+        group-by: dependency-name
+        patterns: ["*"]
+      docker-security:
+        applies-to: security-updates
+        group-by: dependency-name
+        patterns: ["*"]
+    ignore:
+      - dependency-name: golang
+        update-types: ["version-update:semver-major", "version-update:semver-minor", "version-update:semver-patch"]
+  # Workflows pin each action to a release's commit, with the version in a comment, which Dependabot updates together.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 3
+    groups:
+      actions:
+        applies-to: version-updates
+        update-types: [minor, patch]
+        patterns: ["*"]
+      actions-security:
+        applies-to: security-updates
+        patterns: ["*"]
