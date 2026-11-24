@@ -1,62 +1,35 @@
 # Dependabot version updates. Security alerts come from the repository's Dependabot Alerts.
 #
-# The root module, tools/, the plugins, their images, and the workflows have an entry each. The plugins' entries match
-# every plugin with a glob, so a new plugin needs no change here; without group-by, the updates of a group are not
-# merged across directories, so each plugin gets pull requests of its own, and CI tests what one affects only
-# (tools/affected): a dependency of one plugin never waits for, nor breaks, another.
+# One update of a dependency is one pull request, across every directory that has it: the Go entry covers the root
+# module, tools/, and every plugin, and the image entry every plugin's Dockerfile, each grouped by dependency name. The
+# globs match every plugin, so a new plugin needs no change here. CI then tests what the pull request affects
+# (tools/affected).
 #
 # A plugin's go.mod replaces the root module with ../.., so an update of the root module needs the plugins' go.mod
 # tidied in the same pull request, or lint fails it: run ./scripts/tidy.sh on the branch and push.
 #
 # The 3-day cooldown, as mycroblog/my has it, keeps a release younger than three days out; security updates still open
-# at once. Minor and patch updates of an entry share one pull request; a major update opens its own.
+# at once. Minor and patch updates share a group; a major update opens its own pull request.
 version: 2
 updates:
-  # Go modules: the root module, tools/, and the plugins.
   - package-ecosystem: gomod
-    directory: /
+    directories: ["/", "/tools", "/plugins/*"]
     schedule:
       interval: weekly
     cooldown:
       default-days: 3
     groups:
-      go-root:
+      go:
         applies-to: version-updates
+        group-by: dependency-name
         update-types: [minor, patch]
         patterns: ["*"]
-      go-root-security:
+      go-security:
         applies-to: security-updates
+        group-by: dependency-name
         patterns: ["*"]
-  - package-ecosystem: gomod
-    directory: /tools
-    schedule:
-      interval: weekly
-    cooldown:
-      default-days: 3
-    groups:
-      go-tools:
-        applies-to: version-updates
-        update-types: [minor, patch]
-        patterns: ["*"]
-      go-tools-security:
-        applies-to: security-updates
-        patterns: ["*"]
-  - package-ecosystem: gomod
-    directories: ["/plugins/*"]
-    schedule:
-      interval: weekly
-    cooldown:
-      default-days: 3
-    groups:
-      go-plugin:
-        applies-to: version-updates
-        update-types: [minor, patch]
-        patterns: ["*"]
-      go-plugin-security:
-        applies-to: security-updates
-        patterns: ["*"]
-  # The images of the plugins. The golang tag must match .tool-versions (scripts/lint.sh), so it is raised by hand;
-  # Dependabot raises the digest of the distribution.
+  # The golang tag must match .tool-versions (scripts/lint.sh), so it is raised by hand; Dependabot raises the digest of
+  # the distribution, the only thing that moves under a pinned tag, so every update of an image is grouped.
   - package-ecosystem: docker
     directories: ["/plugins/*"]
     schedule:
@@ -64,12 +37,13 @@ updates:
     cooldown:
       default-days: 3
     groups:
-      docker-plugin:
+      docker:
         applies-to: version-updates
-        update-types: [minor, patch]
+        group-by: dependency-name
         patterns: ["*"]
-      docker-plugin-security:
+      docker-security:
         applies-to: security-updates
+        group-by: dependency-name
         patterns: ["*"]
     ignore:
       - dependency-name: golang
