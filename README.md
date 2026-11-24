@@ -7,7 +7,7 @@ Official plugins of [mycroblog/my](https://github.com/mycroblog/my). See [Plugin
 | [my-media-imagemagick](plugins/my-media-imagemagick) | `media_image` | `MediaService.Process` with ImageMagick |
 | [my-media-ffmpeg](plugins/my-media-ffmpeg) | `media_video`, `media_audio` | `MediaService.Remux` with ffmpeg |
 
-Every plugin also serves the probe kind, so `my plugin test --kind probe <address>` checks it before anything else.
+Each plugin's README says how to run it and what it does. Every plugin also serves the probe kind, so `my plugin test --kind probe <address>` checks it before anything else.
 
 ## Layout
 
