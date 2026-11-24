@@ -289,3 +289,5 @@ func sniff(path string) (mediav1.Format, error) {
 	}
 	return media.SniffAV(head[:n]), nil
 }
+
+// ci-check: ci-check/plugin-code
