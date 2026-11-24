@@ -3,9 +3,9 @@
 A media plugin for [mycroblog/my](https://github.com/mycroblog/my) that removes the metadata of uploaded videos and audio
 files with [FFmpeg](https://ffmpeg.org/), on a machine of your choice, in place of the server's built-in processor.
 
-> [!WARNING]
-> Under development. The plugin serves the probe kind already, but it answers every media call with `Unimplemented`, which
-> the server retries forever. Do not point a server at it yet.
+> [!NOTE]
+> Not released yet: there is no published container image or version. Build the image from this repository
+> (`docker build -f plugins/my-media-ffmpeg/Dockerfile .` at its root) to try it.
 
 ## Why use it
 
