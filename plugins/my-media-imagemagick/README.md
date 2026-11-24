@@ -1,0 +1,170 @@
+# my-media-imagemagick
+
+A media plugin for [mycroblog/my](https://github.com/mycroblog/my) that turns uploaded images into their variants with
+[ImageMagick](https://imagemagick.org/), on a machine of your choice, in place of the server's built-in image processor.
+
+> [!WARNING]
+> Under development. The plugin serves the probe kind already, but it answers every media call with `Unimplemented`, which
+> the server retries forever. Do not point a server at it yet.
+
+## When to use it
+
+The server processes images itself by default (`media_image = native`), in pure Go, on the same machine as the rest of
+the instance. Use this plugin when you want that work elsewhere:
+
+- your instance runs on a small machine, and large uploads slow it down;
+- you want images processed on a machine with more CPU, or near your object storage.
+
+The outputs are meant to be the same as the built-in processor's: same sizes, same formats, same quality. Switching to
+the plugin and back does not change what people see.
+
+## Quick start
+
+Run the plugin with Docker, on a Unix socket that the server can reach:
+
+```sh
+docker run -d --name my-media-imagemagick \
+  -v /run/my:/run/my \
+  ghcr.io/mycroblog/my-media-imagemagick:latest \
+  -address unix:///run/my/media-image.sock -socket-mode 0660
+```
+
+Point the server at it, and restart the server:
+
+```sh
+MY_MEDIA_IMAGE=plugin
+MY_PLUGIN_MEDIA_IMAGE_ADDRESS=unix:///run/my/media-image.sock
+```
+
+Check that the server and the plugin understand each other:
+
+```sh
+my plugin test --kind probe unix:///run/my/media-image.sock
+my plugin test --kind media_image unix:///run/my/media-image.sock
+```
+
+`--kind media_image` sends a few test images that hide a location in their metadata, and fails when the location comes
+back in an output.
+
+This plugin takes images only. Leave `media_video` and `media_audio` as they are, or point them at
+[my-media-ffmpeg](../my-media-ffmpeg).
+
+## Connecting the server
+
+The plugin listens on one address. Choose one by where the plugin runs:
+
+| The plugin runs | Address | Who may connect |
+|---|---|---|
+| On the same machine | `unix:///run/my/media-image.sock` | Whoever may write to the socket (`-socket-mode`) |
+| On another machine, over a network you do not fully trust | `https://0.0.0.0:9000` | Clients with a certificate of `-tls-client-ca-file`, or with the token of `-token-file` |
+| On another machine, on a network that is yours alone | `http://0.0.0.0:8080` | Anyone who can reach the port |
+
+Give the server the same address, with the host it reaches the plugin at, in `plugin_media_image_address`.
+
+- **Prefer a Unix socket or `https://`.** Uploads carry their metadata, such as where a photo was taken. Over `http://`
+  they cross the network in the clear, and nothing proves to the server that it talks to this plugin. The server warns
+  at start when you use `http://`.
+- **The token.** Put the same token in a file for the plugin (`-token-file`) and in `plugin_media_image_token` or
+  `MY_PLUGIN_MEDIA_IMAGE_TOKEN_FILE` for the server. The server sends it over a Unix socket or `https://` only, so the
+  plugin refuses to start with `-token-file` and an `http://` address.
+- **Mutual TLS.** Give the plugin `-tls-client-ca-file`, and the server `plugin_media_image_tls_cert_file` and
+  `plugin_media_image_tls_key_file`, signed by that CA.
+
+## Flags
+
+| Flag | Default | Description |
+|---|---|---|
+| `-address` | (required) | Where to listen: `unix:///path`, `http://host:port`, or `https://host:port`. |
+| `-socket-mode` | `0600` | Permissions of the Unix socket. Use `0660` and a shared group when the server runs as another user. |
+| `-tls-cert-file`, `-tls-key-file` | | Certificate and key of the plugin. Required with `https://`. |
+| `-tls-client-ca-file` | | Accept only clients with a certificate signed by this CA (mutual TLS). |
+| `-token-file` | | Accept only requests that carry the token in this file. Not with `http://`. |
+| `-concurrency` | number of CPUs | Images processed at once. Further calls wait for a free slot. |
+| `-magick` | `magick` | The ImageMagick command, found in `PATH` unless a path is given. |
+| `-shutdown-timeout` | `30s` | On `SIGTERM` or `SIGINT`, how long calls in flight may finish before the plugin exits. |
+
+The server runs at most two image calls at once. Raise `-concurrency` only when several servers share the plugin.
+
+## What it does with an image
+
+### Accepted images
+
+| Format | Notes |
+|---|---|
+| JPEG | Its EXIF orientation is applied to the pixels first. |
+| PNG | APNG is read as a still image: its first frame only. |
+| GIF | Still or animated. |
+| WebP | Still or animated, lossy or lossless. |
+
+The plugin reads the format from the file's content, never from its name, and hands ImageMagick only these four. Anything
+else, AVIF and HEIC included, is refused as an unsupported format, as the built-in processor does.
+
+### Outputs
+
+The server says what the image is for (a post, an avatar, a header, or a custom emoji) and the size of each output. The
+plugin makes:
+
+| Output | Still image | Animated image |
+|---|---|---|
+| Small, medium | WebP (lossy, quality 80, with transparency when the image has it) | A still WebP of the first frame, and an animated WebP |
+| Large | JPEG (quality 85) when the image is opaque, PNG when it has transparency; always PNG for a custom emoji | A still JPEG or PNG of the first frame, and a GIF |
+
+- An image smaller than its box is not enlarged.
+- Avatars are cropped to a square around the focal point the person chose; the other purposes keep their aspect ratio.
+- The plugin also returns the image's dimensions and the [blurhash](https://blurha.sh) of the small output, which the
+  clients show while the image loads.
+- The same image with the same request gives the same bytes, so a retried call does not change the outputs.
+
+### Metadata
+
+Every output is written without metadata: EXIF (location, camera, date), XMP, IPTC, comments, and the color profile. The
+pixels are converted to sRGB before the profile is dropped, so the colors stay as they were.
+
+The plugin removes the metadata, not the server: the server checks the format and the size of each output, but cannot
+tell that every trace of metadata is gone.
+
+### Where the image goes
+
+- The plugin keeps nothing. It works in a temporary directory of its own (under `TMPDIR`), removed at the end of each
+  call, whether the call succeeds or not.
+- Its logs carry the outcome and the duration of each call, never the image or its metadata.
+
+## When an image is refused
+
+The plugin answers each call with an outcome. The server rejects the upload, as its own processor would, for every
+outcome but a temporary failure, which it retries later.
+
+| Outcome | When | The server |
+|---|---|---|
+| `OUTCOME_OK` | The outputs follow. | Stores them. |
+| `OUTCOME_UNSUPPORTED_FORMAT` | The image is none of the accepted formats. | Rejects the upload. |
+| `OUTCOME_TOO_LARGE` | The file is longer than the server's limit. | Rejects the upload. |
+| `OUTCOME_DIMENSIONS` | The width, height, pixels, or frames exceed the server's limits. | Rejects the upload. |
+| `OUTCOME_CORRUPT` | The image does not decode. | Rejects the upload. |
+| `OUTCOME_TEMPORARY` | ImageMagick failed, ran out of memory, or the plugin is shutting down. | Retries later. |
+
+The plugin applies the server's limits to ImageMagick itself, before decoding the whole image, so an image built to
+expand in memory is refused instead of filling it.
+
+## Running it without Docker
+
+You need ImageMagick 7 (the `magick` command) built with JPEG, PNG, GIF, and WebP support:
+
+```sh
+magick -list format | grep -E '^ *(JPEG|PNG|GIF|WEBP)\*? '
+```
+
+Install the plugin, and run it:
+
+```sh
+go install github.com/mycroblog/plugin/plugins/my-media-imagemagick@latest
+my-media-imagemagick -address unix:///run/my/media-image.sock
+```
+
+The container image ships a `policy.xml` that disables every ImageMagick coder but the four above. Outside the container,
+the plugin names the coder of each image itself, so it does not depend on your `policy.xml`; tightening that file as well
+is still a good idea.
+
+## License
+
+[MIT](../../LICENSE).
