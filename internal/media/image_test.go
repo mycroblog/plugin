@@ -125,3 +125,5 @@ func TestBlurhash(t *testing.T) {
 		}
 	}
 }
+
+// ci-check: ci-check/shared-test
