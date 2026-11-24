@@ -17,6 +17,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -25,6 +26,8 @@ import (
 type Config struct {
 	// Address is unix:///path/to.sock, http://host:port, or https://host:port.
 	Address string
+	// SocketMode is the permissions of the Unix socket of a unix:// address; zero is 0600.
+	SocketMode fs.FileMode
 	// TLSCertFile and TLSKeyFile are required for https://.
 	TLSCertFile string
 	TLSKeyFile  string
@@ -36,14 +39,23 @@ type Config struct {
 	ShutdownTimeout time.Duration
 }
 
-// RegisterFlags binds the fields of c to flags of fs.
-func (c *Config) RegisterFlags(fs *flag.FlagSet) {
-	fs.StringVar(&c.Address, "address", "", "address to listen on: unix:///path, http://host:port, or https://host:port")
-	fs.StringVar(&c.TLSCertFile, "tls-cert-file", "", "certificate for https://")
-	fs.StringVar(&c.TLSKeyFile, "tls-key-file", "", "private key for https://")
-	fs.StringVar(&c.TLSClientCAFile, "tls-client-ca-file", "", "CA of client certificates; enables mutual TLS")
-	fs.StringVar(&c.TokenFile, "token-file", "", "file holding the bearer token the server must send")
-	fs.DurationVar(&c.ShutdownTimeout, "shutdown-timeout", 30*time.Second, "how long calls in flight may finish on shutdown")
+// RegisterFlags binds the fields of c to flags of f.
+func (c *Config) RegisterFlags(f *flag.FlagSet) {
+	f.StringVar(&c.Address, "address", "", "address to listen on: unix:///path, http://host:port, or https://host:port")
+	c.SocketMode = 0o600
+	f.Func("socket-mode", "permissions of the Unix socket, in octal (default 0600)", func(v string) error {
+		m, err := strconv.ParseUint(v, 8, 32)
+		if err != nil || m > 0o777 {
+			return fmt.Errorf("%q is not a mode in octal, such as 0660", v)
+		}
+		c.SocketMode = fs.FileMode(m)
+		return nil
+	})
+	f.StringVar(&c.TLSCertFile, "tls-cert-file", "", "certificate for https://")
+	f.StringVar(&c.TLSKeyFile, "tls-key-file", "", "private key for https://")
+	f.StringVar(&c.TLSClientCAFile, "tls-client-ca-file", "", "CA of client certificates; enables mutual TLS")
+	f.StringVar(&c.TokenFile, "token-file", "", "file holding the bearer token the server must send")
+	f.DurationVar(&c.ShutdownTimeout, "shutdown-timeout", 30*time.Second, "how long calls in flight may finish on shutdown")
 }
 
 // Run serves h on the address of c until ctx is done, then shuts down gracefully.
@@ -72,7 +84,7 @@ func Run(ctx context.Context, c Config, h http.Handler) error {
 	switch u.Scheme {
 	case "unix":
 		protocols.SetUnencryptedHTTP2(true)
-		ln, err = listenUnix(u.Path)
+		ln, err = listenUnix(u.Path, c.SocketMode)
 	case "http":
 		protocols.SetUnencryptedHTTP2(true)
 		ln, err = net.Listen("tcp", u.Host)
@@ -115,7 +127,7 @@ func Run(ctx context.Context, c Config, h http.Handler) error {
 }
 
 // listenUnix listens on path, replacing a socket left behind by an earlier run but nothing else.
-func listenUnix(path string) (net.Listener, error) {
+func listenUnix(path string, mode fs.FileMode) (net.Listener, error) {
 	if fi, err := os.Lstat(path); err == nil {
 		if fi.Mode().Type() != fs.ModeSocket {
 			return nil, fmt.Errorf("%s exists and is not a socket", path)
@@ -124,7 +136,18 @@ func listenUnix(path string) (net.Listener, error) {
 			return nil, err
 		}
 	}
-	return net.Listen("unix", path)
+	if mode == 0 {
+		mode = 0o600
+	}
+	ln, err := net.Listen("unix", path)
+	if err != nil {
+		return nil, err
+	}
+	if err := os.Chmod(path, mode); err != nil {
+		ln.Close()
+		return nil, err
+	}
+	return ln, nil
 }
 
 func tlsConfig(c Config) (*tls.Config, error) {

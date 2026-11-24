@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"runtime"
 	"syscall"
 
 	"github.com/mycroblog/plugin/internal/media"
@@ -18,11 +19,13 @@ import (
 func main() {
 	var cfg server.Config
 	cfg.RegisterFlags(flag.CommandLine)
+	var opts media.Options
+	flag.IntVar(&opts.Concurrency, "concurrency", runtime.NumCPU(), "files processed at once; further calls wait")
 	flag.Parse()
 
 	mux := http.NewServeMux()
 	mux.Handle(probe.NewHandler())
-	mux.Handle(media.NewHandler())
+	mux.Handle(media.NewHandler(opts))
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
