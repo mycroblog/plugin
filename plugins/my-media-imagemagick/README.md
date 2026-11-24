@@ -3,9 +3,9 @@
 A media plugin for [mycroblog/my](https://github.com/mycroblog/my) that turns uploaded images into their variants with
 [ImageMagick](https://imagemagick.org/), on a machine of your choice, in place of the server's built-in image processor.
 
-> [!WARNING]
-> Under development. The plugin serves the probe kind already, but it answers every media call with `Unimplemented`, which
-> the server retries forever. Do not point a server at it yet.
+> [!NOTE]
+> Not released yet: there is no published container image or version. Build the image from this repository
+> (`docker build -f plugins/my-media-imagemagick/Dockerfile .` at its root) to try it.
 
 ## Why use it
 
@@ -87,6 +87,7 @@ Give the server the same address, with the host it reaches the plugin at, in `pl
 | `-concurrency` | number of CPUs | Images processed at once. Further calls wait for a free slot. |
 | `-webp-quality` | `80` | Quality of the WebP outputs, from 1 to 100. |
 | `-jpeg-quality` | `85` | Quality of the JPEG outputs, from 1 to 100. |
+| `-srgb-profile` | `/usr/share/color/icc/sRGB.icc` | The sRGB ICC profile that images with a profile of their own are converted to. |
 | `-magick` | `magick` | The ImageMagick command, found in `PATH` unless a path is given. |
 | `-shutdown-timeout` | `30s` | On `SIGTERM` or `SIGINT`, how long calls in flight may finish before the plugin exits. |
 
@@ -162,7 +163,9 @@ expand in memory is refused instead of filling it.
 
 ## Running it without Docker
 
-You need ImageMagick 7 (the `magick` command) built with JPEG, PNG, GIF, and WebP support:
+You need ImageMagick 7 (the `magick` command) built with JPEG, PNG, GIF, and WebP support and with lcms, and an sRGB
+ICC profile (on Debian and Ubuntu, `icc-profiles-free` installs one where `-srgb-profile` looks by default). The plugin
+checks all of this at start, and refuses to start without it.
 
 ```sh
 magick -list format | grep -E '^ *(JPEG|PNG|GIF|WEBP)\*? '
@@ -175,7 +178,8 @@ go install github.com/mycroblog/plugin/plugins/my-media-imagemagick@latest
 my-media-imagemagick -address unix:///run/my/media-image.sock
 ```
 
-The container image ships a `policy.xml` that disables every ImageMagick coder but the four above. Outside the container,
+The container image ships a [`policy.xml`](policy.xml) that disables every ImageMagick coder but the four above, the
+ICC coder that reads the sRGB profile, and the raw RGB coder the blurhash is read from. Outside the container,
 the plugin names the coder of each image itself, so it does not depend on your `policy.xml`; tightening that file as well
 is still a good idea.
 

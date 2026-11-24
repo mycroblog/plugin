@@ -12,8 +12,9 @@ RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/my-media-imagemagi
 
 FROM debian:trixie-slim
 RUN apt-get update \
-	&& apt-get install -y --no-install-recommends imagemagick \
+	&& apt-get install -y --no-install-recommends imagemagick icc-profiles-free \
 	&& rm -rf /var/lib/apt/lists/*
+COPY plugins/my-media-imagemagick/policy.xml /etc/ImageMagick-7/policy.xml
 COPY --from=build /out/my-media-imagemagick /usr/local/bin/my-media-imagemagick
 USER nobody
 EXPOSE 8080

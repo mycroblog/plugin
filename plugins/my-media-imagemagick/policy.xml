@@ -1,0 +1,16 @@
+<!--
+  The ImageMagick policy of the container image: the plugin reads and writes JPEG, PNG, GIF, and WebP, reads the sRGB
+  ICC profile, and writes raw RGB for the blurhash. Every other coder, module, delegate, and filter is off.
+-->
+<policymap>
+  <policy domain="coder" rights="none" pattern="*" />
+  <policy domain="coder" rights="read|write" pattern="{JPEG,PNG,GIF,WEBP,RGB,ICC}" />
+  <policy domain="module" rights="none" pattern="*" />
+  <policy domain="module" rights="read|write" pattern="{JPEG,PNG,GIF,WEBP,RGB,META}" />
+  <policy domain="delegate" rights="none" pattern="*" />
+  <policy domain="filter" rights="none" pattern="*" />
+  <policy domain="path" rights="none" pattern="@*" />
+  <policy domain="resource" name="memory" value="1GiB" />
+  <policy domain="resource" name="map" value="2GiB" />
+  <policy domain="resource" name="disk" value="4GiB" />
+</policymap>
