@@ -11,7 +11,8 @@ ARG GO_VERSION=1.27.4
 
 FROM golang:${GO_VERSION}-trixie AS go
 
-FROM debian:trixie-slim AS deps
+# The digest pins the distribution, so that a change of its packages comes as a pull request (Dependabot) that CI tests.
+FROM debian:trixie-slim@sha256:8aa5a7bf5a1955bddbe7d74fcdd0b91ab30e74362a8b73af672b0481b35b44a0 AS deps
 RUN apt-get update \
 	&& apt-get install -y --no-install-recommends imagemagick icc-profiles-free \
 	&& rm -rf /var/lib/apt/lists/*
@@ -23,17 +24,18 @@ RUN apt-get update \
 	&& rm -rf /var/lib/apt/lists/*
 COPY --from=go /usr/local/go /usr/local/go
 ENV PATH=/usr/local/go/bin:$PATH GOTOOLCHAIN=local MY_PLUGIN_REQUIRE_TOOLS=1
-WORKDIR /src
-COPY go.mod go.sum ./
-COPY plugins/my-media-imagemagick/go.mod plugins/my-media-imagemagick/go.sum* ./plugins/my-media-imagemagick/
-RUN go work init . ./plugins/my-media-imagemagick && go mod download
-COPY gen ./gen
-COPY internal ./internal
-COPY plugins/my-media-imagemagick ./plugins/my-media-imagemagick
-CMD ["go", "test", "-race", "-count=1", "./plugins/my-media-imagemagick/..."]
+# The plugin's go.mod replaces the root module with ../.., so the build uses the root module of the same commit.
+WORKDIR /src/plugins/my-media-imagemagick
+COPY go.mod go.sum /src/
+COPY plugins/my-media-imagemagick/go.mod plugins/my-media-imagemagick/go.sum ./
+RUN go mod download
+COPY gen /src/gen
+COPY internal /src/internal
+COPY plugins/my-media-imagemagick ./
+CMD ["go", "test", "-race", "-count=1", "./..."]
 
 FROM test AS build
-RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/my-media-imagemagick ./plugins/my-media-imagemagick
+RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/my-media-imagemagick .
 
 FROM deps AS runtime
 COPY --from=build /out/my-media-imagemagick /usr/local/bin/my-media-imagemagick

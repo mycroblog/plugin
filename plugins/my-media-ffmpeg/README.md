@@ -166,11 +166,14 @@ limits costs little.
 You need FFmpeg 7 or later, with `ffmpeg` and `ffprobe`. The plugin only demuxes and muxes, so any build will do: it needs
 no encoders but those of the cover pictures (`mjpeg`, `png`).
 
-Install the plugin, and run it:
+Build the plugin from a checkout of this repository, which it builds with (its `go.mod` replaces the shared module with
+the checkout's), and run it:
 
 ```sh
-go install github.com/mycroblog/plugin/plugins/my-media-ffmpeg@latest
-my-media-ffmpeg -address unix:///run/my/media-av.sock
+git clone https://github.com/mycroblog/plugin.git
+cd plugin/plugins/my-media-ffmpeg
+GOWORK=off go build -o my-media-ffmpeg .
+./my-media-ffmpeg -address unix:///run/my/media-av.sock
 ```
 
 ## License

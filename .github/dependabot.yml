@@ -1,0 +1,121 @@
+# Dependabot version updates. Security alerts come from the repository's Dependabot Alerts.
+#
+# Each module, each plugin's image, and the workflows have an entry of their own, so that an update is a pull request of
+# its own, and CI tests what it affects only (tools/affected): a dependency of one plugin never waits for, nor breaks,
+# another. scripts/lint.sh checks that every plugin is listed under gomod and docker.
+#
+# A plugin's go.mod replaces the root module with ../.., so an update of the root module needs the plugins' go.mod
+# tidied in the same pull request, or lint fails it: run ./scripts/tidy.sh on the branch and push.
+#
+# The 3-day cooldown, as mycroblog/my has it, keeps a release younger than three days out; security updates still open
+# at once. Minor and patch updates of an entry share one pull request; a major update opens its own.
+version: 2
+updates:
+  # Go modules: the root module, tools/, and each plugin.
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 3
+    groups:
+      go-root:
+        applies-to: version-updates
+        update-types: [minor, patch]
+        patterns: ["*"]
+      go-root-security:
+        applies-to: security-updates
+        patterns: ["*"]
+  - package-ecosystem: gomod
+    directory: /tools
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 3
+    groups:
+      go-tools:
+        applies-to: version-updates
+        update-types: [minor, patch]
+        patterns: ["*"]
+      go-tools-security:
+        applies-to: security-updates
+        patterns: ["*"]
+  - package-ecosystem: gomod
+    directory: /plugins/my-media-ffmpeg
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 3
+    groups:
+      go-my-media-ffmpeg:
+        applies-to: version-updates
+        update-types: [minor, patch]
+        patterns: ["*"]
+      go-my-media-ffmpeg-security:
+        applies-to: security-updates
+        patterns: ["*"]
+  - package-ecosystem: gomod
+    directory: /plugins/my-media-imagemagick
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 3
+    groups:
+      go-my-media-imagemagick:
+        applies-to: version-updates
+        update-types: [minor, patch]
+        patterns: ["*"]
+      go-my-media-imagemagick-security:
+        applies-to: security-updates
+        patterns: ["*"]
+  # The images of the plugins. The golang tag must match .tool-versions (scripts/lint.sh), so it is raised by hand;
+  # Dependabot raises the digest of the distribution.
+  - package-ecosystem: docker
+    directory: /plugins/my-media-ffmpeg
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 3
+    groups:
+      docker-my-media-ffmpeg:
+        applies-to: version-updates
+        update-types: [minor, patch]
+        patterns: ["*"]
+      docker-my-media-ffmpeg-security:
+        applies-to: security-updates
+        patterns: ["*"]
+    ignore:
+      - dependency-name: golang
+        update-types: ["version-update:semver-major", "version-update:semver-minor", "version-update:semver-patch"]
+  - package-ecosystem: docker
+    directory: /plugins/my-media-imagemagick
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 3
+    groups:
+      docker-my-media-imagemagick:
+        applies-to: version-updates
+        update-types: [minor, patch]
+        patterns: ["*"]
+      docker-my-media-imagemagick-security:
+        applies-to: security-updates
+        patterns: ["*"]
+    ignore:
+      - dependency-name: golang
+        update-types: ["version-update:semver-major", "version-update:semver-minor", "version-update:semver-patch"]
+  # Workflows pin each action to a release's commit, with the version in a comment, which Dependabot updates together.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 3
+    groups:
+      actions:
+        applies-to: version-updates
+        update-types: [minor, patch]
+        patterns: ["*"]
+      actions-security:
+        applies-to: security-updates
+        patterns: ["*"]

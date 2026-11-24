@@ -1,1 +1,5 @@
 .env*
+
+# A workspace of your own, if you want one: go work init . ./plugins/* (CI and the images never use one).
+go.work
+go.work.sum

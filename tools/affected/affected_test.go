@@ -21,7 +21,6 @@ const goVersion = "1.27.4"
 //	plugins/p2          imports internal/c
 var fixture = map[string]string{
 	"go.mod":                     "module github.com/mycroblog/plugin\n\ngo " + goVersion + "\n",
-	"go.work":                    "go " + goVersion + "\n\nuse (\n\t.\n\t./plugins/p1\n\t./plugins/p2\n)\n",
 	"README.md":                  "# fixture\n",
 	"internal/a/a.go":            "package a\n\nfunc A() int { return 1 }\n",
 	"internal/a/a_test.go":       "package a\n\nimport (\n\t\"testing\"\n\n\t\"github.com/mycroblog/plugin/internal/c\"\n)\n\nfunc TestA(t *testing.T) { _ = c.C() }\n",
@@ -32,13 +31,24 @@ var fixture = map[string]string{
 	"third_party/ext1/ext.go":    "package ext\n\nfunc E() int { return 1 }\n",
 	"third_party/ext2/go.mod":    "module example.com/ext\n\ngo " + goVersion + "\n",
 	"third_party/ext2/ext.go":    "package ext\n\nfunc E() int { return 2 }\n",
-	"plugins/p1/go.mod": "module github.com/mycroblog/plugin/plugins/p1\n\ngo " + goVersion + "\n\n" +
-		"require example.com/ext v0.0.0\n\nreplace example.com/ext => ../../third_party/ext1\n",
-	"plugins/p1/main.go":    "package main\n\nimport (\n\t\"example.com/ext\"\n\n\t\"github.com/mycroblog/plugin/internal/a\"\n)\n\nfunc main() { _, _ = a.A(), ext.E() }\n",
-	"plugins/p1/Dockerfile": "FROM scratch\n",
-	"plugins/p1/README.md":  "# p1\n",
-	"plugins/p2/go.mod":     "module github.com/mycroblog/plugin/plugins/p2\n\ngo " + goVersion + "\n",
-	"plugins/p2/main.go":    "package main\n\nimport \"github.com/mycroblog/plugin/internal/c\"\n\nfunc main() { _ = c.C() }\n",
+	"plugins/p1/go.mod":          p1GoMod("ext1"),
+	"plugins/p1/main.go":         "package main\n\nimport (\n\t\"example.com/ext\"\n\n\t\"github.com/mycroblog/plugin/internal/a\"\n)\n\nfunc main() { _, _ = a.A(), ext.E() }\n",
+	"plugins/p1/Dockerfile":      "FROM scratch\n",
+	"plugins/p1/README.md":       "# p1\n",
+	"plugins/p2/go.mod":          pluginGoMod("p2"),
+	"plugins/p2/main.go":         "package main\n\nimport \"github.com/mycroblog/plugin/internal/c\"\n\nfunc main() { _ = c.C() }\n",
+}
+
+// pluginGoMod is the go.mod of a plugin of the fixture, which replaces the root module with ../.. as in the repository.
+func pluginGoMod(name string, extra ...string) string {
+	return "module github.com/mycroblog/plugin/plugins/" + name + "\n\ngo " + goVersion + "\n\n" +
+		"require github.com/mycroblog/plugin v0.0.0-00010101000000-000000000000\n" + strings.Join(extra, "") +
+		"\nreplace github.com/mycroblog/plugin => ../..\n"
+}
+
+// p1GoMod is the go.mod of p1, with example.com/ext replaced with third_party/<ext>.
+func p1GoMod(ext string) string {
+	return pluginGoMod("p1", "require example.com/ext v0.0.0\n\nreplace example.com/ext => ../../third_party/"+ext+"\n")
 }
 
 const (
@@ -85,10 +95,9 @@ func TestCompute(t *testing.T) {
 			want:   Result{Packages: []string{}, Plugins: []string{"p2"}, Contract: []string{"p2"}},
 		},
 		{
-			name: "a new plugin, with go.work: the new plugin only",
+			name: "a new plugin: the new plugin only",
 			change: map[string]string{
-				"go.work":            "go " + goVersion + "\n\nuse (\n\t.\n\t./plugins/p1\n\t./plugins/p2\n\t./plugins/p3\n)\n",
-				"plugins/p3/go.mod":  "module github.com/mycroblog/plugin/plugins/p3\n\ngo " + goVersion + "\n",
+				"plugins/p3/go.mod":  pluginGoMod("p3"),
 				"plugins/p3/main.go": "package main\n\nimport \"github.com/mycroblog/plugin/internal/c\"\n\nfunc main() { _ = c.C() }\n",
 			},
 			want: Result{Packages: []string{}, Plugins: []string{"p3"}, Contract: []string{"p3"}},
@@ -104,10 +113,9 @@ func TestCompute(t *testing.T) {
 			want:   Result{Packages: []string{}, Plugins: []string{}, Contract: []string{}},
 		},
 		{
-			name: "a dependency of one plugin: that plugin only",
-			change: map[string]string{"plugins/p1/go.mod": "module github.com/mycroblog/plugin/plugins/p1\n\ngo " + goVersion + "\n\n" +
-				"require example.com/ext v0.0.0\n\nreplace example.com/ext => ../../third_party/ext2\n"},
-			want: Result{Packages: []string{}, Plugins: []string{"p1"}, Contract: []string{"p1"}},
+			name:   "a dependency of one plugin: that plugin only",
+			change: map[string]string{"plugins/p1/go.mod": p1GoMod("ext2")},
+			want:   Result{Packages: []string{}, Plugins: []string{"p1"}, Contract: []string{"p1"}},
 		},
 		{
 			name:   "the code of a dependency: the plugins that build it",
