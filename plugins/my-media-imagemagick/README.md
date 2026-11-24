@@ -7,16 +7,21 @@ A media plugin for [mycroblog/my](https://github.com/mycroblog/my) that turns up
 > Under development. The plugin serves the probe kind already, but it answers every media call with `Unimplemented`, which
 > the server retries forever. Do not point a server at it yet.
 
-## When to use it
+## Why use it
 
-The server processes images itself by default (`media_image = native`), in pure Go, on the same machine as the rest of
-the instance. Use this plugin when you want that work elsewhere:
+The server processes images itself by default (`media_image = native`), in pure Go. This plugin does the same job with
+ImageMagick, and does it better where pure Go falls short:
 
-- your instance runs on a small machine, and large uploads slow it down;
-- you want images processed on a machine with more CPU, or near your object storage.
+| | Built-in processor | my-media-imagemagick |
+|---|---|---|
+| Wide-gamut photos (Display P3, Adobe RGB), such as those of recent phones | The color profile is dropped as is, so the colors come out dull or shifted | Converted to sRGB first, so the colors stay as they were |
+| Resizing | Catmull-Rom for still images, bilinear for the frames of an animation | Lanczos for both, with a light sharpening after a large reduction |
+| WebP encoder | A pure-Go port | libwebp, the reference encoder |
+| Animated GIF output | Each frame mapped onto its original palette, without dithering | A palette made for each resized frame, with dithering, so gradients show fewer bands |
+| Where the work runs | On the instance | Wherever you run the plugin, so large uploads do not slow down the instance |
 
-The outputs are meant to be the same as the built-in processor's: same sizes, same formats, same quality. Switching to
-the plugin and back does not change what people see.
+The sizes and the formats of the outputs are the ones the server asks for, so the clients and other servers see the same
+kind of images as before; only better ones.
 
 ## Quick start
 
@@ -80,6 +85,8 @@ Give the server the same address, with the host it reaches the plugin at, in `pl
 | `-tls-client-ca-file` | | Accept only clients with a certificate signed by this CA (mutual TLS). |
 | `-token-file` | | Accept only requests that carry the token in this file. Not with `http://`. |
 | `-concurrency` | number of CPUs | Images processed at once. Further calls wait for a free slot. |
+| `-webp-quality` | `80` | Quality of the WebP outputs, from 1 to 100. |
+| `-jpeg-quality` | `85` | Quality of the JPEG outputs, from 1 to 100. |
 | `-magick` | `magick` | The ImageMagick command, found in `PATH` unless a path is given. |
 | `-shutdown-timeout` | `30s` | On `SIGTERM` or `SIGINT`, how long calls in flight may finish before the plugin exits. |
 
@@ -96,8 +103,11 @@ The server runs at most two image calls at once. Raise `-concurrency` only when 
 | GIF | Still or animated. |
 | WebP | Still or animated, lossy or lossless. |
 
-The plugin reads the format from the file's content, never from its name, and hands ImageMagick only these four. Anything
-else, AVIF and HEIC included, is refused as an unsupported format, as the built-in processor does.
+The plugin reads the format from the file's content, never from its name, and hands ImageMagick only these four.
+
+These four are all the server sends for now: it checks each upload with its built-in processor before it calls the
+plugin. Accepting more, such as AVIF, HEIC, and animated PNG, needs a change in mycroblog/my, which we have asked for; this
+plugin will take them once the server sends them.
 
 ### Outputs
 
@@ -106,19 +116,23 @@ plugin makes:
 
 | Output | Still image | Animated image |
 |---|---|---|
-| Small, medium | WebP (lossy, quality 80, with transparency when the image has it) | A still WebP of the first frame, and an animated WebP |
-| Large | JPEG (quality 85) when the image is opaque, PNG when it has transparency; always PNG for a custom emoji | A still JPEG or PNG of the first frame, and a GIF |
+| Small, medium | WebP (lossy, with transparency when the image has it) | A still WebP of the first frame, and an animated WebP |
+| Large | JPEG when the image is opaque, PNG when it has transparency; always PNG for a custom emoji | A still JPEG or PNG of the first frame, and a GIF |
+
+The quality of the WebP and the JPEG outputs is 80 and 85 by default, as the built-in processor's; `-webp-quality` and
+`-jpeg-quality` change it.
 
 - An image smaller than its box is not enlarged.
 - Avatars are cropped to a square around the focal point the person chose; the other purposes keep their aspect ratio.
 - The plugin also returns the image's dimensions and the [blurhash](https://blurha.sh) of the small output, which the
   clients show while the image loads.
-- The same image with the same request gives the same bytes, so a retried call does not change the outputs.
+- The same image with the same request and the same flags gives the same bytes, so a retried call does not change the
+  outputs.
 
 ### Metadata
 
 Every output is written without metadata: EXIF (location, camera, date), XMP, IPTC, comments, and the color profile. The
-pixels are converted to sRGB before the profile is dropped, so the colors stay as they were.
+pixels are converted to sRGB with the image's profile before it is dropped, so the colors stay as they were.
 
 The plugin removes the metadata, not the server: the server checks the format and the size of each output, but cannot
 tell that every trace of metadata is gone.

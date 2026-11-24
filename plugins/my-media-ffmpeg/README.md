@@ -7,11 +7,19 @@ files with [FFmpeg](https://ffmpeg.org/), on a machine of your choice, in place 
 > Under development. The plugin serves the probe kind already, but it answers every media call with `Unimplemented`, which
 > the server retries forever. Do not point a server at it yet.
 
-## When to use it
+## Why use it
 
-The server processes videos and audio files itself by default (`media_video = native`, `media_audio = native`), in pure
-Go. Use this plugin when you want that work on another machine, or when you trust FFmpeg's demuxers with files the
-built-in processor finds hard to read.
+The server processes videos and audio files itself by default (`media_video = native`, `media_audio = native`), with
+parsers of its own written in pure Go. This plugin does the same job with FFmpeg:
+
+- **The work runs elsewhere.** Remuxing a 100 MiB video reads and writes all of it; the plugin keeps that off the
+  instance.
+- **FFmpeg's demuxers and muxers.** The ones most players and video services use, for the files of phones, cameras,
+  and editors alike.
+
+For now the server checks each upload with its built-in parsers before it calls the plugin, so the plugin receives the
+files the built-in processor accepts, no more. Accepting more, such as fragmented MP4, needs a change in mycroblog/my,
+which we have asked for; this plugin will take them once the server sends them.
 
 The plugin **remuxes**: it writes the same video and audio streams again, in the same container, without the metadata.
 It never transcodes, so the quality and the size stay as they were, and a call takes about as long as reading the file.
@@ -92,8 +100,6 @@ share the plugin.
 ## What it does with a file
 
 ### Accepted files
-
-The same files as the built-in processor:
 
 | File | Container | Codecs |
 |---|---|---|
