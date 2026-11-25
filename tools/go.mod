@@ -5,7 +5,7 @@ go 1.27.4
 tool github.com/bufbuild/buf/cmd/buf
 
 require (
-	go.yaml.in/yaml/v3 v3.0.5
+	go.yaml.in/yaml/v3 v3.0.6
 	golang.org/x/tools v0.53.0
 )
 
