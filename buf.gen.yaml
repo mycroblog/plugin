@@ -5,7 +5,7 @@ clean: true
 inputs:
   - git_repo: https://github.com/mycroblog/my.git
     subdir: api/plugin
-    ref: f55bdcbad12dec9439899dbfc3c13cbcfb6231e5
+    ref: v0.1.0-rc.12
 managed:
   enabled: true
   override:

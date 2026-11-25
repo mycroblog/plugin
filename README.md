@@ -64,7 +64,8 @@ this repository in their direction, because CI decides what to test from the imp
 ```
 
 To follow the protocol, bump `ref` in `buf.gen.yaml` and regenerate: a release tag, or a commit of mycroblog/my's main
-when a plugin needs a change that is not released yet. CI runs `my plugin test` built from the same ref.
+when a plugin needs a change that is not released yet. CI runs `my plugin test` of the same ref: for a tag, the `my` the
+release attaches (from v0.1.0-rc.12 on), after checking its checksum and provenance; for a commit, built from it.
 
 ### Running a plugin
 
@@ -96,6 +97,7 @@ and over plain TCP where the kind allows it. It fails on a failing case plugin.y
 that passes or no longer runs.
 
 ```sh
+gh release download v0.1.0-rc.12 -R mycroblog/my -p 'my_*_linux_amd64.tar.gz' -O - | tar -xz my  # or build it
 GOWORK=off go run -C tools ./cmd/contract -root .. -plugin my-media-imagemagick -image my-media-imagemagick -my ./my
 ```
 

@@ -184,8 +184,22 @@ jobs:
         with:
           path: ${{ runner.temp }}/bin/my
           key: my-${{ runner.os }}-${{ steps.pin.outputs.ref }}
-      - name: Build my at that version
-        if: steps.my-cache.outputs.cache-hit != 'true'
+      - name: Download my of that release
+        # A release from v0.1.0-rc.12 on attaches my, with SHA256SUMS and a provenance attestation per archive.
+        if: steps.my-cache.outputs.cache-hit != 'true' && startsWith(steps.pin.outputs.ref, 'v')
+        env:
+          REF: ${{ steps.pin.outputs.ref }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          archive="my_${REF}_linux_amd64.tar.gz"
+          mkdir -p "$RUNNER_TEMP/release" "$RUNNER_TEMP/bin"
+          cd "$RUNNER_TEMP/release"
+          gh release download "$REF" -R mycroblog/my -p "$archive" -p SHA256SUMS
+          sha256sum -c --ignore-missing --strict SHA256SUMS
+          gh attestation verify "$archive" -R mycroblog/my
+          tar -xzf "$archive" -C "$RUNNER_TEMP/bin" my
+      - name: Build my at that commit
+        if: steps.my-cache.outputs.cache-hit != 'true' && !startsWith(steps.pin.outputs.ref, 'v')
         env:
           REF: ${{ steps.pin.outputs.ref }}
         run: |
