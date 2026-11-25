@@ -6,9 +6,11 @@ package server
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/subtle"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/hex"
 	"errors"
 	"flag"
 	"fmt"
@@ -17,8 +19,10 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -126,28 +130,53 @@ func Run(ctx context.Context, c Config, h http.Handler) error {
 	return nil
 }
 
-// listenUnix listens on path, replacing a socket left behind by an earlier run but nothing else.
+// listenUnix listens on path, replacing a socket left behind by an earlier run but nothing else. The socket appears at
+// path only once it listens with its mode: it is made under a temporary name in the same directory, and renamed to path.
+// Made at path itself, it would accept connections, with the permissions of the umask, before its chmod, and refuse
+// them before its listen.
 func listenUnix(path string, mode fs.FileMode) (net.Listener, error) {
-	if fi, err := os.Lstat(path); err == nil {
-		if fi.Mode().Type() != fs.ModeSocket {
-			return nil, fmt.Errorf("%s exists and is not a socket", path)
-		}
-		if err := os.Remove(path); err != nil {
-			return nil, err
-		}
+	if fi, err := os.Lstat(path); err == nil && fi.Mode().Type() != fs.ModeSocket {
+		return nil, fmt.Errorf("%s exists and is not a socket", path)
 	}
 	if mode == 0 {
 		mode = 0o600
 	}
-	ln, err := net.Listen("unix", path)
+	var suffix [6]byte
+	if _, err := rand.Read(suffix[:]); err != nil {
+		return nil, err
+	}
+	tmp := filepath.Join(filepath.Dir(path), ".sock-"+hex.EncodeToString(suffix[:]))
+	ln, err := net.ListenUnix("unix", &net.UnixAddr{Name: tmp, Net: "unix"})
 	if err != nil {
 		return nil, err
 	}
-	if err := os.Chmod(path, mode); err != nil {
+	// The listener would remove tmp, which is gone by then; unixListener removes path instead.
+	ln.SetUnlinkOnClose(false)
+	if err := os.Chmod(tmp, mode); err != nil {
 		ln.Close()
+		os.Remove(tmp)
 		return nil, err
 	}
-	return ln, nil
+	// rename replaces a socket left at path in one step.
+	if err := os.Rename(tmp, path); err != nil {
+		ln.Close()
+		os.Remove(tmp)
+		return nil, err
+	}
+	return &unixListener{UnixListener: ln, path: path}, nil
+}
+
+// unixListener removes its socket when it closes.
+type unixListener struct {
+	*net.UnixListener
+	path string
+	once sync.Once
+}
+
+func (l *unixListener) Close() error {
+	err := l.UnixListener.Close()
+	l.once.Do(func() { os.Remove(l.path) })
+	return err
 }
 
 func tlsConfig(c Config) (*tls.Config, error) {

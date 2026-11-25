@@ -134,3 +134,43 @@ func TestReplacesOnlyASocket(t *testing.T) {
 		t.Errorf("err = %v, want one saying the file is not a socket", err)
 	}
 }
+
+func TestReplacesAStaleSocket(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "plugin.sock")
+	stale, err := net.Listen("unix", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stale.(*net.UnixListener).SetUnlinkOnClose(false)
+	stale.Close() // a socket left behind by a run that died
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		done <- Run(ctx, Config{Address: "unix://" + path, ShutdownTimeout: time.Second}, http.NotFoundHandler())
+	}()
+	// The stale socket refuses connections; the new one, once renamed over it, accepts them.
+	connected := false
+	for range 100 {
+		if c, err := net.Dial("unix", path); err == nil {
+			c.Close()
+			connected = true
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if !connected {
+		t.Error("the socket never accepted a connection")
+	}
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if _, err := os.Lstat(path); !os.IsNotExist(err) {
+		t.Errorf("the socket is left after shutdown: %v", err)
+	}
+	entries, _ := os.ReadDir(filepath.Dir(path))
+	for _, e := range entries {
+		t.Errorf("%s is left in the directory", e.Name())
+	}
+}
