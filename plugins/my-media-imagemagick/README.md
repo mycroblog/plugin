@@ -110,10 +110,6 @@ The server runs at most two image calls at once. Raise `-concurrency` only when 
 
 The plugin reads the format from the file's content, never from its name, and hands ImageMagick only these.
 
-The server accepts AVIF, HEIC, and APNG uploads only from a plugin that declares them, as this one does, and only in a
-version that asks the plugin for them: a later one than v0.1.0-rc.11. An earlier server, or one whose plugin is
-unreachable, refuses AVIF and HEIC uploads and reads an APNG as a still PNG, as its own processor does.
-
 The plugin accepts AVIF and HEIC only when its ImageMagick decodes them, which it checks at start, logging the formats
 it accepts. The container image has the decoders; see [Running it without Docker](#running-it-without-docker) for your
 own installation.
