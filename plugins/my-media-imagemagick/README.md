@@ -110,18 +110,13 @@ The server runs at most two image calls at once. Raise `-concurrency` only when 
 
 The plugin reads the format from the file's content, never from its name, and hands ImageMagick only these.
 
-The server accepts AVIF, HEIC, and APNG uploads only from a plugin that declares them, which this one does through
-`Describe`, and only from a version of mycroblog/my that asks for it: one after
-[mycroblog/my#3499](https://github.com/mycroblog/my/pull/3499). An earlier server, or one whose plugin is unreachable,
-refuses AVIF and HEIC uploads and reads an APNG as a still PNG, as its own processor does.
+The server accepts AVIF, HEIC, and APNG uploads only from a plugin that declares them, as this one does, and only in a
+version that asks the plugin for them: a later one than v0.1.0-rc.11. An earlier server, or one whose plugin is
+unreachable, refuses AVIF and HEIC uploads and reads an APNG as a still PNG, as its own processor does.
 
-- The plugin declares AVIF and HEIC only when its ImageMagick decodes them: at start, it decodes a small image of
-  each, and logs the formats it accepts. The container image has the decoders; see
-  [Running it without Docker](#running-it-without-docker) for your own installation.
-- The plugin reads an APNG itself and hands ImageMagick its frames, since ImageMagick reads one only through FFmpeg.
-  The server checks its frames and its size from its headers before it calls the plugin, and the plugin checks them
-  again before it decodes a pixel.
-- The image sequences of an AVIF or a HEIC (animated AVIF, HEIC bursts) give a still image of their primary image.
+The plugin accepts AVIF and HEIC only when its ImageMagick decodes them, which it checks at start, logging the formats
+it accepts. The container image has the decoders; see [Running it without Docker](#running-it-without-docker) for your
+own installation.
 
 ### Outputs
 
