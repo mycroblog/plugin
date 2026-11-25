@@ -90,7 +90,7 @@ Give the server the same address, with the host it reaches the plugin at, in `pl
 | `-jpeg-quality` | `85` | Quality of the JPEG outputs, from 1 to 100. |
 | `-srgb-profile` | `/usr/share/color/icc/sRGB.icc` | The sRGB ICC profile that images with a profile of their own are converted to. |
 | `-magick` | `magick` | The ImageMagick command, found in `PATH` unless a path is given. |
-| `-shutdown-timeout` | `30s` | On `SIGTERM` or `SIGINT`, how long calls in flight may finish before the plugin exits. |
+| `-shutdown-timeout` | `30s` | On `SIGTERM` or `SIGINT`, how long calls in flight may finish. The calls still running then are cancelled, and their files removed, before the plugin exits. |
 
 The server runs at most two image calls at once. Raise `-concurrency` only when several servers share the plugin.
 

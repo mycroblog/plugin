@@ -39,7 +39,8 @@ type Config struct {
 	TLSClientCAFile string
 	// TokenFile holds the bearer token the server sends. The server sends it over unix:// and https:// only.
 	TokenFile string
-	// ShutdownTimeout bounds how long calls in flight may finish after the context is done.
+	// ShutdownTimeout bounds how long calls in flight may finish after the context is done. The calls still running
+	// then are cancelled: their contexts are done, which stops the commands they run.
 	ShutdownTimeout time.Duration
 }
 
@@ -62,7 +63,11 @@ func (c *Config) RegisterFlags(f *flag.FlagSet) {
 	f.DurationVar(&c.ShutdownTimeout, "shutdown-timeout", 30*time.Second, "how long calls in flight may finish on shutdown")
 }
 
-// Run serves h on the address of c until ctx is done, then shuts down gracefully.
+// Run serves h on the address of c until ctx is done, then shuts down gracefully: it accepts no new call, lets the
+// calls in flight finish for Config.ShutdownTimeout, and then cancels those left and waits for their handlers to return,
+// so that each one removes what it made, as a temporary directory, before Run returns. The context of each call carries
+// the values of ctx, but is done only by that cancellation or by the call's own end: the end of ctx alone, a SIGTERM,
+// leaves the calls their grace.
 func Run(ctx context.Context, c Config, h http.Handler) error {
 	u, err := url.Parse(c.Address)
 	if err != nil {
@@ -82,7 +87,19 @@ func Run(ctx context.Context, c Config, h http.Handler) error {
 
 	var protocols http.Protocols
 	protocols.SetHTTP1(true)
-	srv := &http.Server{Handler: h, Protocols: &protocols, ReadHeaderTimeout: 10 * time.Second}
+	callCtx, cancelCalls := context.WithCancel(context.WithoutCancel(ctx))
+	defer cancelCalls()
+	var inFlight sync.WaitGroup
+	srv := &http.Server{
+		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			inFlight.Add(1)
+			defer inFlight.Done()
+			h.ServeHTTP(w, r)
+		}),
+		Protocols:         &protocols,
+		ReadHeaderTimeout: 10 * time.Second,
+		BaseContext:       func(net.Listener) context.Context { return callCtx },
+	}
 
 	var ln net.Listener
 	switch u.Scheme {
@@ -121,11 +138,18 @@ func Run(ctx context.Context, c Config, h http.Handler) error {
 	}
 	shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), c.ShutdownTimeout)
 	defer cancel()
-	if err := srv.Shutdown(shutdownCtx); err != nil {
-		return fmt.Errorf("server: shutdown: %w", err)
+	shutdownErr := srv.Shutdown(shutdownCtx)
+	if shutdownErr != nil {
+		// The grace is over: cancel the calls left, close their connections, and wait for their handlers.
+		cancelCalls()
+		srv.Close()
 	}
+	inFlight.Wait()
 	if err := <-errc; !errors.Is(err, http.ErrServerClosed) {
 		return err
+	}
+	if shutdownErr != nil {
+		return fmt.Errorf("server: shutdown: calls cut short after %s: %w", c.ShutdownTimeout, shutdownErr)
 	}
 	return nil
 }

@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -172,5 +173,82 @@ func TestReplacesAStaleSocket(t *testing.T) {
 	entries, _ := os.ReadDir(filepath.Dir(path))
 	for _, e := range entries {
 		t.Errorf("%s is left in the directory", e.Name())
+	}
+}
+
+// runWith runs Run with h on a Unix socket in the background; stop ends its context and returns what Run returned.
+func runWith(t *testing.T, timeout time.Duration, h http.Handler) (path string, stop func() error) {
+	t.Helper()
+	path = filepath.Join(t.TempDir(), "plugin.sock")
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- Run(ctx, Config{Address: "unix://" + path, ShutdownTimeout: timeout}, h) }()
+	t.Cleanup(cancel)
+	waitFor(t, path)
+	return path, func() error {
+		cancel()
+		select {
+		case err := <-done:
+			return err
+		case <-time.After(10 * time.Second):
+			t.Fatal("Run did not return")
+			return nil
+		}
+	}
+}
+
+func TestShutdownLetsCallsFinish(t *testing.T) {
+	started := make(chan struct{})
+	cancelled := make(chan bool, 1)
+	path, stop := runWith(t, 5*time.Second, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		close(started)
+		select {
+		case <-r.Context().Done():
+			cancelled <- true
+		case <-time.After(300 * time.Millisecond):
+			cancelled <- false
+		}
+		io.WriteString(w, "done")
+	}))
+	got := make(chan string, 1)
+	go func() { _, body := get(t, unixClient(path), ""); got <- body }()
+	<-started
+	if err := stop(); err != nil {
+		t.Errorf("Run: %v", err)
+	}
+	if <-cancelled {
+		t.Error("the call was cancelled within its grace")
+	}
+	if body := <-got; body != "done" {
+		t.Errorf("the call answered %q, want done", body)
+	}
+}
+
+func TestShutdownCancelsCallsAfterGrace(t *testing.T) {
+	started := make(chan struct{})
+	var cleaned atomic.Bool
+	path, stop := runWith(t, 200*time.Millisecond, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		close(started)
+		<-r.Context().Done() // a call that never ends by itself, as a stuck conversion
+		time.Sleep(50 * time.Millisecond)
+		cleaned.Store(true) // what the handler removes, as its temporary directory
+	}))
+	go func() {
+		req, _ := http.NewRequest(http.MethodGet, "http://plugin/", nil)
+		if res, err := unixClient(path).Do(req); err == nil {
+			res.Body.Close()
+		}
+	}()
+	<-started
+	begin := time.Now()
+	err := stop()
+	if err == nil || !strings.Contains(err.Error(), "cut short") {
+		t.Errorf("Run: %v, want one saying the calls were cut short", err)
+	}
+	if !cleaned.Load() {
+		t.Error("Run returned before the cancelled call's handler did")
+	}
+	if d := time.Since(begin); d > 5*time.Second {
+		t.Errorf("Run took %s to return", d)
 	}
 }
