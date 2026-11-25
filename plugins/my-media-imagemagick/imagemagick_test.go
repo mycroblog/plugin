@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -250,6 +251,103 @@ func TestAnimation(t *testing.T) {
 		}
 	}
 	checkOutputs(t, c, head, res)
+}
+
+func TestAPNG(t *testing.T) {
+	c := converter(t)
+	frames := []testFrame{
+		{rect: image.Rect(0, 0, 120, 80), c: red, delayNum: 1, delay: 10},
+		{rect: image.Rect(20, 20, 60, 60), c: green, dispose: apngDisposeBackground, delayNum: 1, delay: 10},
+		{rect: image.Rect(60, 20, 100, 60), c: blue, blend: 1, delayNum: 1, delay: 10},
+	}
+	head := attachment(mediav1.Purpose_PURPOSE_ATTACHMENT)
+	res := process(t, c, head, buildAPNG(t, 120, 80, true, frames))
+	if res.Outcome != mediav1.Outcome_OUTCOME_OK || res.Width != 120 || res.Height != 80 {
+		t.Fatalf("outcome %v, %d×%d", res.Outcome, res.Width, res.Height)
+	}
+	got := outputs(res)
+	if len(got) != 6 {
+		t.Fatalf("%d outputs, want 6", len(got))
+	}
+	for _, o := range []mediav1.Output{mediav1.Output_OUTPUT_ANIMATED_SMALL, mediav1.Output_OUTPUT_ANIMATED_MEDIUM, mediav1.Output_OUTPUT_ANIMATED_LARGE} {
+		out, err := exec.Command(c.Magick, "identify", "-format", "x", got[o].Path).Output()
+		if err != nil || len(out) != 3 {
+			t.Errorf("%v has %d frames (%v), want 3", o, len(out), err)
+		}
+	}
+	// The still outputs show the first frame, red all over, not the green square of the second.
+	large := got[mediav1.Output_OUTPUT_STILL_LARGE]
+	px, err := exec.Command(c.Magick, coders[large.Format]+":"+large.Path, "-crop", "1x1+40+40", "-depth", "8", "rgb:-").Output()
+	if err != nil || len(px) != 3 || px[0] < 200 || px[1] > 60 || px[2] > 60 {
+		t.Errorf("the still large output at 40,40 is %v (%v), want red", px, err)
+	}
+	checkOutputs(t, c, head, res)
+}
+
+func TestHEIFFormats(t *testing.T) {
+	c := converter(t)
+	for _, tt := range []struct {
+		format mediav1.Format
+		file   string
+	}{
+		{mediav1.Format_FORMAT_AVIF, "sample.avif"},
+		{mediav1.Format_FORMAT_HEIC, "sample.heic"},
+	} {
+		t.Run(tt.format.String(), func(t *testing.T) {
+			if !slices.Contains(c.InputFormats(), tt.format) {
+				skip(t, "this ImageMagick does not decode "+tt.format.String()+" (libheif and its decoder)")
+			}
+			data, err := samples.ReadFile("samples/" + tt.file)
+			if err != nil {
+				t.Fatal(err)
+			}
+			head := attachment(mediav1.Purpose_PURPOSE_ATTACHMENT)
+			res := process(t, c, head, data)
+			if res.Outcome != mediav1.Outcome_OUTCOME_OK || res.Width != 64 || res.Height != 48 {
+				t.Fatalf("outcome %v, %d×%d; want OK, 64×48", res.Outcome, res.Width, res.Height)
+			}
+			if len(res.Outputs) != 3 {
+				t.Errorf("%d outputs, want the 3 still ones", len(res.Outputs))
+			}
+			checkOutputs(t, c, head, res)
+		})
+	}
+}
+
+func TestHEICIsRotatedOnce(t *testing.T) {
+	c := converter(t)
+	if !slices.Contains(c.InputFormats(), mediav1.Format_FORMAT_HEIC) {
+		skip(t, "this ImageMagick does not decode HEIC (libheif and libde265)")
+	}
+	// A 64×48 image, red above and blue below, that heif-enc stored with the transformation of EXIF orientation 6
+	// (irot) and the EXIF itself: libheif turns it, and the EXIF must not turn it again.
+	data, err := os.ReadFile("testdata/rotated.heic")
+	if err != nil {
+		t.Fatal(err)
+	}
+	head := attachment(mediav1.Purpose_PURPOSE_ATTACHMENT)
+	res := process(t, c, head, data)
+	if res.Outcome != mediav1.Outcome_OUTCOME_OK || res.Width != 48 || res.Height != 64 {
+		t.Fatalf("outcome %v, %d×%d; want OK, 48×64", res.Outcome, res.Width, res.Height)
+	}
+	large := outputs(res)[mediav1.Output_OUTPUT_STILL_LARGE]
+	px, err := exec.Command(c.Magick, coders[large.Format]+":"+large.Path, "-crop", "1x1+45+32", "-depth", "8", "rgb:-").Output()
+	if err != nil || len(px) != 3 || px[0] < 200 || px[2] > 60 {
+		t.Errorf("the right of the output is %v (%v), want red: turned once, clockwise", px, err)
+	}
+	checkOutputs(t, c, head, res)
+}
+
+func TestUndeclaredFormatRefused(t *testing.T) {
+	c := converter(t)
+	c.inputFormats = nil
+	data, err := samples.ReadFile("samples/sample.heic")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res := process(t, c, attachment(mediav1.Purpose_PURPOSE_ATTACHMENT), data); res.Outcome != mediav1.Outcome_OUTCOME_UNSUPPORTED_FORMAT {
+		t.Errorf("outcome = %v, want OUTCOME_UNSUPPORTED_FORMAT", res.Outcome)
+	}
 }
 
 func TestRefused(t *testing.T) {

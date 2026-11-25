@@ -10,7 +10,9 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
+	"time"
 
 	"connectrpc.com/connect"
 
@@ -38,6 +40,61 @@ func (p *images) Process(_ context.Context, in Image) (ImageResult, error) {
 		res.Outputs = append(res.Outputs, Output{Output: o, Format: mediav1.Format_FORMAT_WEBP, Width: 3, Height: 2, Path: in.Path})
 	}
 	return res, nil
+}
+
+func (p *images) InputFormats() []mediav1.Format {
+	return []mediav1.Format{mediav1.Format_FORMAT_HEIC, mediav1.Format_FORMAT_APNG}
+}
+
+func TestDescribe(t *testing.T) {
+	res, err := newClient(t, Options{Images: &images{}}).Describe(context.Background(), connect.NewRequest(&mediav1.DescribeRequest{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := res.Msg.GetInputFormats(); !slices.Equal(got, []mediav1.Format{mediav1.Format_FORMAT_HEIC, mediav1.Format_FORMAT_APNG}) {
+		t.Errorf("input formats = %v", got)
+	}
+
+	// A plugin without images, as one of video only, declares none: the server keeps the built-in formats.
+	_, err = newClient(t, Options{}).Describe(context.Background(), connect.NewRequest(&mediav1.DescribeRequest{}))
+	if connect.CodeOf(err) != connect.CodeUnimplemented {
+		t.Errorf("Describe without images: %v, want unimplemented", err)
+	}
+}
+
+func TestDescribeWhileBusy(t *testing.T) {
+	// Every slot is taken by a call that waits; Describe still answers.
+	p := &blocking{started: make(chan struct{}), release: make(chan struct{})}
+	defer close(p.release)
+	c := newClient(t, Options{Images: p, Concurrency: 1})
+	go func() {
+		stream := c.Process(context.Background())
+		_ = stream.Send(&mediav1.ProcessRequest{Message: &mediav1.ProcessRequest_Head{Head: head(4)}})
+		_ = stream.Send(&mediav1.ProcessRequest{Message: &mediav1.ProcessRequest_Chunk{Chunk: []byte("data")}})
+		_ = stream.CloseRequest()
+		_, _ = stream.Receive()
+	}()
+	<-p.started
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if _, err := c.Describe(ctx, connect.NewRequest(&mediav1.DescribeRequest{})); err != nil {
+		t.Fatalf("Describe while busy: %v", err)
+	}
+}
+
+// blocking holds its call until release is closed.
+type blocking struct {
+	images
+	started, release chan struct{}
+}
+
+func (p *blocking) Process(ctx context.Context, in Image) (ImageResult, error) {
+	close(p.started)
+	select {
+	case <-p.release:
+	case <-ctx.Done():
+	}
+	return ImageResult{Outcome: mediav1.Outcome_OUTCOME_CORRUPT}, nil
 }
 
 func newClient(t *testing.T, o Options) mediav1connect.MediaServiceClient {

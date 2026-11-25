@@ -2,7 +2,12 @@ package media
 
 import (
 	"bytes"
+	"encoding/binary"
+	"hash/crc32"
 	"math/rand/v2"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	mediav1 "github.com/mycroblog/plugin/gen/my/plugin/media/v1"
@@ -17,13 +22,53 @@ func TestSniffImage(t *testing.T) {
 		{"\x89PNG\r\n\x1A\n\x00", mediav1.Format_FORMAT_PNG},
 		{"GIF89a", mediav1.Format_FORMAT_GIF},
 		{"RIFF\x00\x00\x00\x00WEBPVP8 ", mediav1.Format_FORMAT_WEBP},
-		{"\x00\x00\x00\x1CftypavifX", mediav1.Format_FORMAT_UNSPECIFIED},
+		{"\x00\x00\x00\x18ftypavif\x00\x00\x00\x00mif1miaf", mediav1.Format_FORMAT_AVIF},
+		{"\x00\x00\x00\x18ftypmif1\x00\x00\x00\x00mif1avif", mediav1.Format_FORMAT_AVIF},
+		{"\x00\x00\x00\x18ftypheic\x00\x00\x00\x00mif1heic", mediav1.Format_FORMAT_HEIC},
+		{"\x00\x00\x00\x18ftypmif1\x00\x00\x00\x00mif1heix", mediav1.Format_FORMAT_HEIC},
+		// mif1 alone is a HEIF file of neither codec, and a brand past the end of the box does not count.
+		{"\x00\x00\x00\x14ftypmif1\x00\x00\x00\x00mif1", mediav1.Format_FORMAT_UNSPECIFIED},
+		{"\x00\x00\x00\x14ftypmif1\x00\x00\x00\x00mif1avif", mediav1.Format_FORMAT_UNSPECIFIED},
+		{"\x00\x00\x00\x18ftypisom\x00\x00\x02\x00isomiso2", mediav1.Format_FORMAT_UNSPECIFIED},
 		{"<svg", mediav1.Format_FORMAT_UNSPECIFIED},
 		{"", mediav1.Format_FORMAT_UNSPECIFIED},
 	} {
 		if got := SniffImage([]byte(tt.head)); got != tt.want {
 			t.Errorf("SniffImage(%q) = %v, want %v", tt.head, got, tt.want)
 		}
+	}
+}
+
+func TestSniffImageFile(t *testing.T) {
+	chunk := func(typ string, data string) string {
+		c := binary.BigEndian.AppendUint32(nil, uint32(len(data)))
+		c = append(c, typ+data...)
+		return string(binary.BigEndian.AppendUint32(c, crc32.ChecksumIEEE(c[4:])))
+	}
+	ihdr := chunk("IHDR", "\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00")
+	big := chunk("iTXt", strings.Repeat("x", 4096)) // past the 512 bytes that SniffImage reads
+	for _, tt := range []struct {
+		name, data string
+		want       mediav1.Format
+	}{
+		{"PNG", "\x89PNG\r\n\x1A\n" + ihdr + chunk("IDAT", "x") + chunk("IEND", ""), mediav1.Format_FORMAT_PNG},
+		{"APNG", "\x89PNG\r\n\x1A\n" + ihdr + big + chunk("acTL", "\x00\x00\x00\x02\x00\x00\x00\x00") + chunk("IDAT", "x"), mediav1.Format_FORMAT_APNG},
+		{"acTL after IDAT", "\x89PNG\r\n\x1A\n" + ihdr + chunk("IDAT", "x") + chunk("acTL", "\x00\x00\x00\x02\x00\x00\x00\x00"), mediav1.Format_FORMAT_PNG},
+		{"cut short", "\x89PNG\r\n\x1A\n" + ihdr[:10], mediav1.Format_FORMAT_PNG},
+		{"chunk past the end", "\x89PNG\r\n\x1A\n" + ihdr + "\x7F\xFF\xFF\xFFtEXt", mediav1.Format_FORMAT_PNG},
+		{"HEIC", "\x00\x00\x00\x18ftypheic\x00\x00\x00\x00mif1heic", mediav1.Format_FORMAT_HEIC},
+		{"JPEG", "\xFF\xD8\xFF\xE0", mediav1.Format_FORMAT_JPEG},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "image")
+			if err := os.WriteFile(path, []byte(tt.data), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			got, err := SniffImageFile(path)
+			if err != nil || got != tt.want {
+				t.Errorf("SniffImageFile = %v, %v; want %v", got, err, tt.want)
+			}
+		})
 	}
 }
 
@@ -34,6 +79,8 @@ func TestSniffAV(t *testing.T) {
 	}{
 		{"\x00\x00\x00\x20ftypisom", mediav1.Format_FORMAT_MP4},
 		{"\x00\x00\x00\x14ftypqt  ", mediav1.Format_FORMAT_MP4},
+		{"\x00\x00\x00\x18ftypheic\x00\x00\x00\x00mif1heic", mediav1.Format_FORMAT_UNSPECIFIED},
+		{"\x00\x00\x00\x18ftypavif\x00\x00\x00\x00mif1miaf", mediav1.Format_FORMAT_UNSPECIFIED},
 		{"\x1A\x45\xDF\xA3\x9F\x42\x86\x81\x01\x42\x82\x84webm", mediav1.Format_FORMAT_WEBM},
 		{"\x1A\x45\xDF\xA3\x9F\x42\x86\x81\x01\x42\x82\x88matroska", mediav1.Format_FORMAT_UNSPECIFIED},
 		{"OggS\x00\x02", mediav1.Format_FORMAT_OGG},

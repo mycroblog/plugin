@@ -178,18 +178,21 @@ jobs:
           cache-dependency-path: tools/go.sum
       - name: The version of mycroblog/my that buf.gen.yaml pins
         id: pin
-        run: echo "tag=$(awk '$1 == "tag:" { print $2 }' buf.gen.yaml)" >> "$GITHUB_OUTPUT"
+        run: echo "ref=$(awk '$1 == "tag:" || $1 == "ref:" { print $2 }' buf.gen.yaml)" >> "$GITHUB_OUTPUT"
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         id: my-cache
         with:
           path: ${{ runner.temp }}/bin/my
-          key: my-${{ runner.os }}-${{ steps.pin.outputs.tag }}
+          key: my-${{ runner.os }}-${{ steps.pin.outputs.ref }}
       - name: Build my at that version
         if: steps.my-cache.outputs.cache-hit != 'true'
         env:
-          TAG: ${{ steps.pin.outputs.tag }}
+          REF: ${{ steps.pin.outputs.ref }}
         run: |
-          git clone --quiet --depth 1 --branch "$TAG" https://github.com/mycroblog/my.git "$RUNNER_TEMP/my"
+          # A tag or a commit: git clone --branch takes no commit, but a fetch takes both.
+          git init --quiet "$RUNNER_TEMP/my"
+          git -C "$RUNNER_TEMP/my" fetch --quiet --depth 1 https://github.com/mycroblog/my.git "$REF"
+          git -C "$RUNNER_TEMP/my" checkout --quiet FETCH_HEAD
           CGO_ENABLED=0 GOWORK=off go build -C "$RUNNER_TEMP/my" -o "$RUNNER_TEMP/bin/my" ./cmd/my
       - name: Build the runtime image
         env:

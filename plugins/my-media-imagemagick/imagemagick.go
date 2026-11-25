@@ -5,10 +5,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -28,15 +28,30 @@ type Converter struct {
 	// WebPQuality and JPEGQuality are the qualities of the lossy outputs, from 1 to 100.
 	WebPQuality int
 	JPEGQuality int
+
+	// inputFormats are the formats beyond the built-in ones that this ImageMagick decodes, which check finds.
+	inputFormats []mediav1.Format
 }
 
-// coders names the ImageMagick coder of each accepted format. The plugin always names it, so that ImageMagick never
-// guesses the format of an upload from its content.
+// InputFormats implements media.ImageProcessor: AVIF and HEIC when check decoded them with this ImageMagick, and APNG,
+// which the plugin reads itself.
+func (c *Converter) InputFormats() []mediav1.Format {
+	return slices.Clone(c.inputFormats)
+}
+
+// builtinFormats are the formats that the plugin always accepts.
+var builtinFormats = map[mediav1.Format]bool{
+	mediav1.Format_FORMAT_JPEG: true, mediav1.Format_FORMAT_PNG: true, mediav1.Format_FORMAT_GIF: true, mediav1.Format_FORMAT_WEBP: true,
+}
+
+// coders names the ImageMagick coder of each format that ImageMagick reads.
 var coders = map[mediav1.Format]string{
 	mediav1.Format_FORMAT_JPEG: "jpeg",
 	mediav1.Format_FORMAT_PNG:  "png",
 	mediav1.Format_FORMAT_GIF:  "gif",
 	mediav1.Format_FORMAT_WEBP: "webp",
+	mediav1.Format_FORMAT_AVIF: "avif",
+	mediav1.Format_FORMAT_HEIC: "heic",
 }
 
 // errRefused carries the outcome of an image that ImageMagick refuses.
@@ -61,33 +76,49 @@ func (c *Converter) Process(ctx context.Context, in media.Image) (media.ImageRes
 }
 
 func (c *Converter) process(ctx context.Context, in media.Image) (media.ImageResult, error) {
-	format, err := sniff(in.Path)
+	format, err := media.SniffImageFile(in.Path)
 	if err != nil {
 		return media.ImageResult{}, err
 	}
-	coder, ok := coders[format]
-	if !ok {
+	if !builtinFormats[format] && !slices.Contains(c.inputFormats, format) {
 		return media.ImageResult{}, refuse(mediav1.Outcome_OUTCOME_UNSUPPORTED_FORMAT, "not an accepted format")
 	}
-	src := coder + ":" + in.Path
 	limits := in.Head.GetLimits()
 	env := limitEnv(limits)
 
-	info, err := c.identify(ctx, env, src, format)
-	if err != nil {
-		return media.ImageResult{}, err
-	}
-	if err := info.check(limits); err != nil {
-		return media.ImageResult{}, err
+	// src are the arguments that read the image: the file with its coder named, so that ImageMagick never guesses the
+	// format of an upload from its content, or the frames of an APNG, which the plugin composes itself.
+	var src []string
+	var info imageInfo
+	if format == mediav1.Format_FORMAT_APNG {
+		a, err := apngInspect(in.Path)
+		if err != nil {
+			return media.ImageResult{}, err
+		}
+		info = a.info()
+		if err := info.check(limits); err != nil {
+			return media.ImageResult{}, err
+		}
+		if src, err = apngFrames(in.Path, in.Dir, a); err != nil {
+			return media.ImageResult{}, err
+		}
+	} else {
+		src = []string{coders[format] + ":" + in.Path}
+		if info, err = c.identify(ctx, env, src[0], format); err != nil {
+			return media.ImageResult{}, err
+		}
+		if err := info.check(limits); err != nil {
+			return media.ImageResult{}, err
+		}
 	}
 
 	// The first frame, upright, in sRGB, without metadata: the source of the still outputs.
 	base := filepath.Join(in.Dir, "base.png")
-	args := []string{src}
+	args := slices.Clone(src)
 	if info.frames > 1 {
 		args = append(args, "-coalesce", "-delete", "1--1")
 	} else {
-		args[0] += "[0]"
+		args[len(args)-1] += "[0]"
 	}
 	args = append(args, "-auto-orient")
 	args = append(args, c.toSRGB(info)...)
@@ -137,7 +168,7 @@ func (c *Converter) process(ctx context.Context, in media.Image) (media.ImageRes
 		animated := [3]mediav1.Output{mediav1.Output_OUTPUT_ANIMATED_SMALL, mediav1.Output_OUTPUT_ANIMATED_MEDIUM, mediav1.Output_OUTPUT_ANIMATED_LARGE}
 		for i, box := range boxes {
 			t := media.Plan(info.width, info.height, box, head.GetFocusX(), head.GetFocusY())
-			args := []string{src, "-coalesce"}
+			args := append(slices.Clone(src), "-coalesce")
 			args = append(args, c.toSRGB(info)...)
 			args = append(args, geometry(t)...)
 			args = append(args, "-strip")
@@ -311,20 +342,6 @@ func containsAny(s string, subs ...string) bool {
 		}
 	}
 	return false
-}
-
-func sniff(path string) (mediav1.Format, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return 0, err
-	}
-	defer f.Close()
-	head := make([]byte, 16)
-	n, err := io.ReadFull(f, head)
-	if err != nil && !errors.Is(err, io.ErrUnexpectedEOF) && !errors.Is(err, io.EOF) {
-		return 0, err
-	}
-	return media.SniffImage(head[:n]), nil
 }
 
 func blurhash(path string, w, h int) (string, error) {

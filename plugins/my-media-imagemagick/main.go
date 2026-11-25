@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"embed"
 	"errors"
 	"flag"
 	"fmt"
@@ -11,10 +12,12 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"syscall"
 
+	mediav1 "github.com/mycroblog/plugin/gen/my/plugin/media/v1"
 	"github.com/mycroblog/plugin/internal/media"
 	"github.com/mycroblog/plugin/internal/probe"
 	"github.com/mycroblog/plugin/internal/server"
@@ -37,6 +40,7 @@ func main() {
 		os.Exit(2)
 	}
 	opts.Images = c
+	fmt.Fprintln(os.Stderr, "my-media-imagemagick: accepts JPEG, PNG, GIF, WebP, and", formatNames(c.inputFormats))
 
 	mux := http.NewServeMux()
 	mux.Handle(probe.NewHandler())
@@ -74,6 +78,54 @@ func (c *Converter) check() error {
 				errs = append(errs, fmt.Errorf("-magick: %s cannot read and write %s", c.Magick, f))
 			}
 		}
+		c.inputFormats = c.decodable()
 	}
 	return errors.Join(errs...)
+}
+
+// samples holds an image of each format beyond the built-in ones that ImageMagick may decode, through libheif and its
+// decoders, which an installation may lack or its policy may forbid.
+//
+//go:embed samples
+var samples embed.FS
+
+// decodable returns the formats beyond the built-in ones that the plugin accepts: those of the samples that this
+// ImageMagick decodes, and APNG, which the plugin reads itself.
+func (c *Converter) decodable() []mediav1.Format {
+	dir, err := os.MkdirTemp("", "my-media-imagemagick-")
+	if err != nil {
+		return []mediav1.Format{mediav1.Format_FORMAT_APNG}
+	}
+	defer os.RemoveAll(dir)
+	var formats []mediav1.Format
+	for _, s := range []struct {
+		format mediav1.Format
+		file   string
+	}{
+		{mediav1.Format_FORMAT_AVIF, "sample.avif"},
+		{mediav1.Format_FORMAT_HEIC, "sample.heic"},
+	} {
+		data, err := samples.ReadFile("samples/" + s.file)
+		if err != nil {
+			continue
+		}
+		path := filepath.Join(dir, s.file)
+		if err := os.WriteFile(path, data, 0o600); err != nil {
+			continue
+		}
+		// Without -ping, identify decodes every pixel.
+		out, err := exec.Command(c.Magick, "identify", "-format", "%w", coders[s.format]+":"+path).Output()
+		if err == nil && strings.TrimSpace(string(out)) != "" {
+			formats = append(formats, s.format)
+		}
+	}
+	return append(formats, mediav1.Format_FORMAT_APNG)
+}
+
+func formatNames(fs []mediav1.Format) string {
+	names := make([]string, len(fs))
+	for i, f := range fs {
+		names[i] = strings.TrimPrefix(f.String(), "FORMAT_")
+	}
+	return strings.Join(names, ", ")
 }
