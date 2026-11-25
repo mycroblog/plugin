@@ -91,7 +91,7 @@ Give the server the same address, with the host it reaches the plugin at, in `pl
 | `-token-file` | | Accept only requests that carry the token in this file. Not with `http://`. |
 | `-concurrency` | number of CPUs | Files processed at once. Further calls wait for a free slot. |
 | `-ffmpeg`, `-ffprobe` | `ffmpeg`, `ffprobe` | The FFmpeg commands, found in `PATH` unless a path is given. |
-| `-shutdown-timeout` | `30s` | On `SIGTERM` or `SIGINT`, how long calls in flight may finish before the plugin exits. |
+| `-shutdown-timeout` | `30s` | On `SIGTERM` or `SIGINT`, how long calls in flight may finish. The calls still running then are cancelled, and their files removed, before the plugin exits. |
 
 The server runs at most two video calls and two audio calls at once. Raise `-concurrency` only when several servers
 share the plugin.
