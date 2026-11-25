@@ -14,7 +14,7 @@ Each plugin's README says how to run it and what it does. Every plugin also serv
 ```
 .
 ├── go.mod            # github.com/mycroblog/plugin: the code the plugins share
-├── buf.gen.yaml      # generates gen/ from the .proto files of mycroblog/my at a pinned tag
+├── buf.gen.yaml      # generates gen/ from the .proto files of mycroblog/my at a pinned ref
 ├── gen/              # generated code of the plugin protocol (do not edit)
 ├── internal/
 │   ├── server/       # listener (unix://, http://, https://), HTTP/2, mutual TLS, bearer token, shutdown
@@ -63,7 +63,8 @@ this repository in their direction, because CI decides what to test from the imp
 ./scripts/generate.sh
 ```
 
-To follow a new protocol release, bump `tag` in `buf.gen.yaml` and regenerate.
+To follow the protocol, bump `ref` in `buf.gen.yaml` and regenerate: a release tag, or a commit of mycroblog/my's main
+when a plugin needs a change that is not released yet. CI runs `my plugin test` built from the same ref.
 
 ### Running a plugin
 

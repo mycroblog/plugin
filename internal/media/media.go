@@ -52,6 +52,10 @@ type ImageProcessor interface {
 	// Process answers an outcome for an image it refuses, and an error for a failure of its own, which the service
 	// answers as OUTCOME_TEMPORARY.
 	Process(ctx context.Context, in Image) (ImageResult, error)
+	// InputFormats returns the formats that Process decodes beyond JPEG, PNG, GIF, and WebP, which it always decodes:
+	// some of FORMAT_AVIF, FORMAT_HEIC, and FORMAT_APNG. Describe answers them; the server sends such files only once
+	// they are declared, and reads an APNG as a still PNG until FORMAT_APNG is.
+	InputFormats() []mediav1.Format
 }
 
 // AV is the input of AVRemuxer.Remux.
@@ -90,7 +94,7 @@ type Output struct {
 
 // Options configure the service.
 type Options struct {
-	// Images serves Process, and AV serves Remux. A nil one answers Unimplemented.
+	// Images serves Process and Describe, and AV serves Remux. A nil one answers Unimplemented.
 	Images ImageProcessor
 	AV     AVRemuxer
 	// Concurrency bounds the calls processed at once; further calls wait. Zero or less is 1.
@@ -117,6 +121,15 @@ func NewHandler(o Options, opts ...connect.HandlerOption) (string, http.Handler)
 type service struct {
 	o     Options
 	slots chan struct{}
+}
+
+// Describe answers the input formats of Images. It takes no slot: the server calls it at start and every 5 minutes, and
+// a busy plugin must still answer it.
+func (s *service) Describe(context.Context, *connect.Request[mediav1.DescribeRequest]) (*connect.Response[mediav1.DescribeResponse], error) {
+	if s.o.Images == nil {
+		return nil, connect.NewError(connect.CodeUnimplemented, errors.New("this plugin does not process images"))
+	}
+	return connect.NewResponse(&mediav1.DescribeResponse{InputFormats: s.o.Images.InputFormats()}), nil
 }
 
 func (s *service) Process(ctx context.Context, stream *connect.BidiStream[mediav1.ProcessRequest, mediav1.ProcessResponse]) error {

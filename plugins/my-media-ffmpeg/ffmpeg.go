@@ -6,8 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
-	"os"
 	"os/exec"
 	"path/filepath"
 	"slices"
@@ -66,7 +64,7 @@ func (r *Remuxer) Remux(ctx context.Context, in media.AV) (media.AVResult, error
 }
 
 func (r *Remuxer) remux(ctx context.Context, in media.AV) (media.AVResult, error) {
-	format, err := sniff(in.Path)
+	format, err := media.SniffAVFile(in.Path)
 	if err != nil {
 		return media.AVResult{}, err
 	}
@@ -274,18 +272,4 @@ func (r *Remuxer) run(ctx context.Context, name string, args ...string) ([]byte,
 		}
 	}
 	return nil, fmt.Errorf("%s: %w: %s", filepath.Base(name), err, msg)
-}
-
-func sniff(path string) (mediav1.Format, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return 0, err
-	}
-	defer f.Close()
-	head := make([]byte, 64)
-	n, err := io.ReadFull(f, head)
-	if err != nil && !errors.Is(err, io.ErrUnexpectedEOF) && !errors.Is(err, io.EOF) {
-		return 0, err
-	}
-	return media.SniffAV(head[:n]), nil
 }

@@ -1,25 +1,122 @@
 package media
 
 import (
+	"bufio"
 	"bytes"
+	"encoding/binary"
+	"errors"
+	"io"
 	"math"
+	"os"
 	"strings"
 
 	mediav1 "github.com/mycroblog/plugin/gen/my/plugin/media/v1"
 )
 
-// SniffImage returns the format of an image from its leading bytes, or FORMAT_UNSPECIFIED for none of JPEG, PNG,
-// GIF, and WebP. File names and declared types are never consulted.
+// SniffImage returns the format of an image from its leading bytes, or FORMAT_UNSPECIFIED for none of JPEG, PNG, GIF,
+// WebP, AVIF, and HEIC. head should hold the first 512 bytes at least, which cover the ftyp box of a HEIF file. An APNG is
+// a PNG here: SniffImageFile tells it apart. File names and declared types are never consulted.
 func SniffImage(head []byte) mediav1.Format {
 	switch {
 	case bytes.HasPrefix(head, []byte("\xFF\xD8\xFF")):
 		return mediav1.Format_FORMAT_JPEG
-	case bytes.HasPrefix(head, []byte("\x89PNG\r\n\x1A\n")):
+	case bytes.HasPrefix(head, pngSignature):
 		return mediav1.Format_FORMAT_PNG
 	case bytes.HasPrefix(head, []byte("GIF87a")), bytes.HasPrefix(head, []byte("GIF89a")):
 		return mediav1.Format_FORMAT_GIF
 	case len(head) >= 12 && bytes.HasPrefix(head, []byte("RIFF")) && string(head[8:12]) == "WEBP":
 		return mediav1.Format_FORMAT_WEBP
+	}
+	return heifFormat(head)
+}
+
+// SniffImageFile returns the format of the image in the file at path, as SniffImage does, and FORMAT_APNG for a PNG
+// whose acTL chunk comes before its first IDAT chunk.
+func SniffImageFile(path string) (mediav1.Format, error) {
+	head, err := readHead(path, 512)
+	if err != nil {
+		return 0, err
+	}
+	format := SniffImage(head)
+	if format != mediav1.Format_FORMAT_PNG {
+		return format, nil
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return 0, err
+	}
+	defer f.Close()
+	if _, err := f.Seek(int64(len(pngSignature)), io.SeekStart); err != nil {
+		return 0, err
+	}
+	animated, err := pngAnimated(bufio.NewReader(f))
+	if err != nil {
+		return 0, err
+	}
+	if animated {
+		return mediav1.Format_FORMAT_APNG, nil
+	}
+	return format, nil
+}
+
+var pngSignature = []byte("\x89PNG\r\n\x1A\n")
+
+// pngAnimated reads the chunks of a PNG after its signature up to its first IDAT chunk, and reports whether an acTL
+// chunk comes before it. A PNG cut short before its image data is not animated: its decoder refuses it.
+func pngAnimated(r *bufio.Reader) (bool, error) {
+	var header [8]byte
+	for {
+		if _, err := io.ReadFull(r, header[:]); err != nil {
+			if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+				return false, nil
+			}
+			return false, err
+		}
+		switch string(header[4:8]) {
+		case "acTL":
+			return true, nil
+		case "IDAT", "IEND":
+			return false, nil
+		}
+		// The data and the CRC.
+		if _, err := r.Discard(int(binary.BigEndian.Uint32(header[:4])) + 4); err != nil {
+			if errors.Is(err, io.EOF) {
+				return false, nil
+			}
+			return false, err
+		}
+	}
+}
+
+// heifFormat returns FORMAT_AVIF or FORMAT_HEIC for a HEIF file, from the brands of its ftyp box: its major brand if
+// that names one of them, or else its first compatible brand that does. Anything else is FORMAT_UNSPECIFIED, an MP4
+// included.
+func heifFormat(head []byte) mediav1.Format {
+	if len(head) < 16 || string(head[4:8]) != "ftyp" {
+		return mediav1.Format_FORMAT_UNSPECIFIED
+	}
+	size := int(binary.BigEndian.Uint32(head[:4]))
+	if size < 16 || size > len(head) {
+		size = len(head)
+	}
+	if f := heifBrand(string(head[8:12])); f != mediav1.Format_FORMAT_UNSPECIFIED {
+		return f
+	}
+	for i := 16; i+4 <= size; i += 4 {
+		if f := heifBrand(string(head[i : i+4])); f != mediav1.Format_FORMAT_UNSPECIFIED {
+			return f
+		}
+	}
+	return mediav1.Format_FORMAT_UNSPECIFIED
+}
+
+// heifBrand returns the format that one brand of a ftyp box names (ISO/IEC 23008-12, and AV1-ISOBMFF for AVIF).
+func heifBrand(brand string) mediav1.Format {
+	switch brand {
+	case "avif", "avis":
+		return mediav1.Format_FORMAT_AVIF
+	case "heic", "heix", "heim", "heis", "hevc", "hevx":
+		return mediav1.Format_FORMAT_HEIC
 	}
 	return mediav1.Format_FORMAT_UNSPECIFIED
 }
