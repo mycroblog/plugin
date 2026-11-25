@@ -14,6 +14,7 @@ ImageMagick, and does it better where pure Go falls short:
 
 | | Built-in processor | my-media-imagemagick |
 |---|---|---|
+| Formats | JPEG, PNG, GIF, and WebP | Also AVIF, HEIC (the photos of iPhones), and animated PNG |
 | Wide-gamut photos (Display P3, Adobe RGB), such as those of recent phones | The color profile is dropped as is, so the colors come out dull or shifted | Converted to sRGB first, so the colors stay as they were |
 | Resizing | Catmull-Rom for still images, bilinear for the frames of an animation | Lanczos for both, with a light sharpening after a large reduction |
 | WebP encoder | A pure-Go port | libwebp, the reference encoder |
@@ -100,15 +101,27 @@ The server runs at most two image calls at once. Raise `-concurrency` only when 
 | Format | Notes |
 |---|---|
 | JPEG | Its EXIF orientation is applied to the pixels first. |
-| PNG | APNG is read as a still image: its first frame only. |
+| PNG | Still. |
+| APNG (animated PNG) | Animated, with its frames composed as the format says (their disposal and blending). |
 | GIF | Still or animated. |
 | WebP | Still or animated, lossy or lossless. |
+| AVIF | Still: the primary image of the file. |
+| HEIC | Still: the primary image of the file, turned and mirrored as the file says. |
 
-The plugin reads the format from the file's content, never from its name, and hands ImageMagick only these four.
+The plugin reads the format from the file's content, never from its name, and hands ImageMagick only these.
 
-These four are all the server sends for now: it checks each upload with its built-in processor before it calls the
-plugin. Accepting more, such as AVIF, HEIC, and animated PNG, needs a change in mycroblog/my ([mycroblog/my#3493](https://github.com/mycroblog/my/issues/3493)); this
-plugin will take them once the server sends them.
+The server accepts AVIF, HEIC, and APNG uploads only from a plugin that declares them, which this one does through
+`Describe`, and only from a version of mycroblog/my that asks for it: one after
+[mycroblog/my#3499](https://github.com/mycroblog/my/pull/3499). An earlier server, or one whose plugin is unreachable,
+refuses AVIF and HEIC uploads and reads an APNG as a still PNG, as its own processor does.
+
+- The plugin declares AVIF and HEIC only when its ImageMagick decodes them: at start, it decodes a small image of
+  each, and logs the formats it accepts. The container image has the decoders; see
+  [Running it without Docker](#running-it-without-docker) for your own installation.
+- The plugin reads an APNG itself and hands ImageMagick its frames, since ImageMagick reads one only through FFmpeg.
+  The server checks its frames and its size from its headers before it calls the plugin, and the plugin checks them
+  again before it decodes a pixel.
+- The image sequences of an AVIF or a HEIC (animated AVIF, HEIC bursts) give a still image of their primary image.
 
 ### Outputs
 
@@ -171,6 +184,9 @@ checks all of this at start, and refuses to start without it.
 magick -list format | grep -E '^ *(JPEG|PNG|GIF|WEBP)\*? '
 ```
 
+For AVIF and HEIC, ImageMagick needs libheif with a decoder of each: on Debian and Ubuntu, `libheif-plugin-dav1d`
+(AVIF) and `libheif-plugin-libde265` (HEIC). Without one, the plugin starts and does not declare that format.
+
 Build the plugin from a checkout of this repository, which it builds with (its `go.mod` replaces the shared module with
 the checkout's), and run it:
 
@@ -181,8 +197,9 @@ GOWORK=off go build -o my-media-imagemagick .
 ./my-media-imagemagick -address unix:///run/my/media-image.sock
 ```
 
-The container image ships a [`policy.xml`](policy.xml) that disables every ImageMagick coder but the four above, the
-ICC coder that reads the sRGB profile, and the raw RGB coder the blurhash is read from. Outside the container,
+The container image ships a [`policy.xml`](policy.xml) that disables every ImageMagick coder but those of the formats
+above (AVIF and HEIC for reading only), the ICC coder that reads the sRGB profile, and the raw RGB coder the blurhash is
+read from, and every delegate, FFmpeg among them. Outside the container,
 the plugin names the coder of each image itself, so it does not depend on your `policy.xml`; tightening that file as well
 is still a good idea.
 
