@@ -30,7 +30,7 @@ Run the plugin with Docker, on a Unix socket that the server can reach:
 ```sh
 docker run -d --name my-media-ffmpeg \
   -v /run/my:/run/my \
-  ghcr.io/mycroblog/my-media-ffmpeg:latest \
+  ghcr.io/mycroblog/my-media-ffmpeg:0.1 \
   -address unix:///run/my/media-av.sock -socket-mode 0660
 ```
 

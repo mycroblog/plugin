@@ -35,7 +35,7 @@ Run the plugin with Docker, on a Unix socket that the server can reach:
 ```sh
 docker run -d --name my-media-libvips \
   -v /run/my:/run/my \
-  ghcr.io/mycroblog/my-media-libvips:latest \
+  ghcr.io/mycroblog/my-media-libvips:0.1 \
   -address unix:///run/my/media-image.sock -socket-mode 0660
 ```
 

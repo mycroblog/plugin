@@ -31,7 +31,7 @@ Run the plugin with Docker, on a Unix socket that the server can reach:
 ```sh
 docker run -d --name my-media-imagemagick \
   -v /run/my:/run/my \
-  ghcr.io/mycroblog/my-media-imagemagick:latest \
+  ghcr.io/mycroblog/my-media-imagemagick:0.1 \
   -address unix:///run/my/media-image.sock -socket-mode 0660
 ```
 
