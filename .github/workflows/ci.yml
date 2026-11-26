@@ -95,6 +95,9 @@ jobs:
             go.sum
             tools/go.sum
             plugins/*/go.sum
+      # go vet type-checks the cgo of my-media-libvips, which needs the headers of libvips.
+      - name: The headers of the plugins' C libraries
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libvips-dev
       - run: ./scripts/lint.sh
       - name: The generated code is that of buf.gen.yaml
         if: needs.plan.outputs.generated == 'true'

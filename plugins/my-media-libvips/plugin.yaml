@@ -1,0 +1,4 @@
+# What CI checks of this plugin against the contract of mycroblog/my: `my plugin test`, at the version buf.gen.yaml pins.
+# probe, which every plugin serves, is always checked.
+kinds:
+  - media_image
