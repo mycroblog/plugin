@@ -1,0 +1,125 @@
+# Keeps one pull request, from release/plugins, that releases every plugin whose image changed since its last release
+# (tools/release), and tags the versions it leaves on main once merged. Each run, for a push to main:
+#
+#   1. tags each version at the top of a plugin's CHANGELOG.md that has no tag yet, on the commit of the push: the merge
+#      of the release pull request. Each tag starts the release workflow, which publishes that plugin's image.
+#   2. writes the next version of each plugin with a change since its last tag to its CHANGELOG.md, and force-pushes
+#      that, on the commit of the push, to release/plugins; then opens the pull request, or updates it. With nothing to
+#      release, it closes the pull request.
+#
+# It acts as the release App, whose key is in the environment `release`, which only main may use. A tag created or a
+# branch pushed with GITHUB_TOKEN starts no workflow: the tags would publish nothing, and CI would not run on the pull
+# request. The App may also create the tags plugins/*/v*, which the repository's tag ruleset forbids to others.
+name: Release pull request
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-pr
+  cancel-in-progress: false
+
+env:
+  # Use exactly the Go version of .tool-versions; never download another toolchain.
+  GOTOOLCHAIN: local
+  GOWORK: "off"
+  BRANCH: release/plugins
+
+defaults:
+  run:
+    # Named, so that a step runs with -o pipefail.
+    shell: bash
+
+jobs:
+  release-pr:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: release
+    steps:
+      - name: A token of the release App
+        id: app
+        uses: actions/create-github-app-token@f418cff399f7aef4c2f0ad47e25ca7a6abbdd6fc # v3.4.0
+        with:
+          app-id: ${{ vars.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The whole history with the tags: the last release of a plugin is its highest tag.
+          fetch-depth: 0
+          fetch-tags: true
+          persist-credentials: false
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version-file: .tool-versions
+          cache-dependency-path: |
+            go.sum
+            tools/go.sum
+            plugins/*/go.sum
+      - name: Tag the versions of the changelogs
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          tags="$(go run -C tools ./cmd/release tags -root ..)"
+          for tag in $tags; do
+            gh api "repos/$REPOSITORY/git/refs" -f "ref=refs/tags/$tag" -f "sha=$GITHUB_SHA" > /dev/null
+            # And here, so that the next step counts it as released.
+            git tag "$tag" "$GITHUB_SHA"
+            echo "Tagged \`$tag\` on $GITHUB_SHA." >> "$GITHUB_STEP_SUMMARY"
+          done
+      - name: Write the next versions to the changelogs
+        id: prepare
+        env:
+          REPO_URL: ${{ github.server_url }}/${{ github.repository }}
+        run: go run -C tools ./cmd/release prepare -root .. -repo-url "$REPO_URL" -body "$RUNNER_TEMP/body.md" -github-output
+      - name: Open or update the pull request
+        if: steps.prepare.outputs.count != '0'
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          REPOSITORY: ${{ github.repository }}
+          OWNER: ${{ github.repository_owner }}
+          SLUG: ${{ steps.app.outputs.app-slug }}
+          TITLE: ${{ steps.prepare.outputs.title }}
+        run: |
+          id="$(gh api "users/$SLUG%5Bbot%5D" --jq .id)"
+          git config user.name "${SLUG}[bot]"
+          git config user.email "${id}+${SLUG}[bot]@users.noreply.github.com"
+          git switch --quiet -c "$BRANCH"
+          git add plugins/*/CHANGELOG.md
+          git commit --quiet -m "$TITLE"
+
+          # The App's token for this push only; the checkout keeps no credentials.
+          auth="$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
+          echo "::add-mask::$auth"
+          git -c "http.https://github.com/.extraheader=AUTHORIZATION: basic $auth" \
+            push --force --quiet origin "HEAD:refs/heads/$BRANCH"
+
+          number="$(gh api "repos/$REPOSITORY/pulls?head=$OWNER:$BRANCH&state=open" --jq '.[0].number // empty')"
+          if [ -z "$number" ]; then
+            url="$(gh api "repos/$REPOSITORY/pulls" -f title="$TITLE" -f head="$BRANCH" -f base=main \
+              -F body=@"$RUNNER_TEMP/body.md" --jq .html_url)"
+          else
+            url="$(gh api -X PATCH "repos/$REPOSITORY/pulls/$number" -f title="$TITLE" \
+              -F body=@"$RUNNER_TEMP/body.md" --jq .html_url)"
+          fi
+          echo "[$TITLE]($url)" >> "$GITHUB_STEP_SUMMARY"
+      - name: Close the pull request, with nothing to release
+        if: steps.prepare.outputs.count == '0'
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          REPOSITORY: ${{ github.repository }}
+          OWNER: ${{ github.repository_owner }}
+        run: |
+          number="$(gh api "repos/$REPOSITORY/pulls?head=$OWNER:$BRANCH&state=open" --jq '.[0].number // empty')"
+          if [ -n "$number" ]; then
+            gh api -X PATCH "repos/$REPOSITORY/pulls/$number" -f state=closed > /dev/null
+            gh api -X DELETE "repos/$REPOSITORY/git/refs/heads/$BRANCH" > /dev/null || true
+            echo "Nothing to release: closed #$number." >> "$GITHUB_STEP_SUMMARY"
+          fi

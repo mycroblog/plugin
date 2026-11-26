@@ -117,12 +117,32 @@ Each plugin is released on its own, as its container image, `ghcr.io/mycroblog/<
 linux/arm64. Its `go.mod` replaces the root module with `../..`, so it builds from a checkout of this repository, not
 with `go install …@version`. There are no GitHub releases: the images are the release.
 
-To release a plugin, tag a commit of main with `plugins/<name>/v<version>` and push the tag:
+Releases go through one pull request, from `release/plugins`, that the [release pull request
+workflow](.github/workflows/release-pr.yml) keeps up to date with main. It lists each plugin whose image changed since
+its last release, with its next version, and writes that version to the plugin's `CHANGELOG.md`, with the commits that
+reach its image. Merging it tags each version on main, `plugins/<name>/v<version>`, as the release App.
+
+- **What needs a release**: a change to the plugin's image. That is its own files, but its tests, its Markdown and
+  `plugin.yaml`; the code of the root module it builds; the modules of its build; `.dockerignore`; and `.tool-versions`.
+  A change to tests, to CI, or to `tools/` and `scripts/` releases nothing. A plugin never released is released at
+  `0.1.0`.
+- **The next version**, from the [Conventional Commits](https://www.conventionalcommits.org/) that reach the image: a
+  breaking change (`feat!:`, or a `BREAKING CHANGE:` footer) moves the major version, a `feat` the minor version, and
+  anything else the patch version. Before 1.0.0, a breaking change moves the minor version, as a `feat` does. After a
+  pre-release, the next version is its release: a fix after `0.2.0-rc.1` is `0.2.0`.
+- **Another version**, such as a pre-release or 1.0.0: edit the first heading of the plugin's `CHANGELOG.md` in the
+  pull request, such as `## 0.2.0-rc.1 (2026-11-27)`. To leave a plugin out, revert its `CHANGELOG.md` there. Each push
+  to main makes the pull request again, which drops such edits, so make them just before merging.
+
+The last release of a plugin is its highest tag, and a version at the top of a `CHANGELOG.md` with no tag yet is tagged
+on the next push to main, whoever wrote it there. To see what the pull request would hold:
 
 ```sh
-git tag plugins/my-media-ffmpeg/v0.1.0 origin/main
-git push origin plugins/my-media-ffmpeg/v0.1.0
+GOWORK=off go run -C tools ./cmd/release plan -root ..
 ```
+
+The tags `plugins/*/v*` are protected by a ruleset: only the release App, and administrators, may create them. An
+administrator may still tag a commit of main by hand, as the workflow does.
 
 The [release workflow](.github/workflows/release.yml) runs the plugin's integration tests on each architecture, pushes
 the images, joins them into one index, and attests its provenance. It refuses a tag on a commit that is not on main, and
@@ -136,14 +156,6 @@ a version that is already published: a published version never changes.
 
 There is no `latest`: a plugin speaks the protocol of the version of mycroblog/my that `buf.gen.yaml` pins, so a
 deployment names the version it runs. Each image carries that version in its label `dev.mycroblog.plugin.protocol`.
-
-A plugin needs a new version when its build changed since its last release: its own files, the code of the root module
-it imports, its Go version, or the packages of its image. affected tells which, though a change to the harness (CI,
-`tools/`, `scripts/`) lists every plugin:
-
-```sh
-GOWORK=off go run -C tools ./cmd/affected -root .. -base plugins/my-media-ffmpeg/v0.1.0
-```
 
 Check an image before you run it:
 
