@@ -113,8 +113,43 @@ CI and Dependabot pick the plugin up by themselves, and CI tests it alone: `./sc
 
 ## Releases
 
-Each plugin is released on its own, as its container image. Its `go.mod` replaces the root module with `../..`, so it
-builds from a checkout of this repository, not with `go install …@version`.
+Each plugin is released on its own, as its container image, `ghcr.io/mycroblog/<name>`, for linux/amd64 and
+linux/arm64. Its `go.mod` replaces the root module with `../..`, so it builds from a checkout of this repository, not
+with `go install …@version`. There are no GitHub releases: the images are the release.
+
+To release a plugin, tag a commit of main with `plugins/<name>/v<version>` and push the tag:
+
+```sh
+git tag plugins/my-media-ffmpeg/v0.1.0 origin/main
+git push origin plugins/my-media-ffmpeg/v0.1.0
+```
+
+The [release workflow](.github/workflows/release.yml) runs the plugin's integration tests on each architecture, pushes
+the images, joins them into one index, and attests its provenance. It refuses a tag on a commit that is not on main, and
+a version that is already published: a published version never changes.
+
+| Tag of the commit | Tags of the image |
+|---|---|
+| `plugins/<name>/v0.1.2` | `0.1.2`, `0.1` |
+| `plugins/<name>/v1.2.3` | `1.2.3`, `1.2`, `1` |
+| `plugins/<name>/v0.2.0-rc.1` | `0.2.0-rc.1` only |
+
+There is no `latest`: a plugin speaks the protocol of the version of mycroblog/my that `buf.gen.yaml` pins, so a
+deployment names the version it runs. Each image carries that version in its label `dev.mycroblog.plugin.protocol`.
+
+A plugin needs a new version when its build changed since its last release: its own files, the code of the root module
+it imports, its Go version, or the packages of its image. affected tells which, though a change to the harness (CI,
+`tools/`, `scripts/`) lists every plugin:
+
+```sh
+GOWORK=off go run -C tools ./cmd/affected -root .. -base plugins/my-media-ffmpeg/v0.1.0
+```
+
+Check an image before you run it:
+
+```sh
+gh attestation verify oci://ghcr.io/mycroblog/my-media-ffmpeg:0.1.0 -R mycroblog/plugin
+```
 
 ## License
 
