@@ -71,20 +71,10 @@ func Compute(ctx context.Context, root, base string) (Result, error) {
 	if err != nil {
 		return Result{}, err
 	}
-	mergeBase, err := git(ctx, root, "merge-base", base, "HEAD")
+	mergeBase, changed, err := changedSince(ctx, root, base)
 	if err != nil {
 		return Result{}, err
 	}
-	mergeBase = strings.TrimSpace(mergeBase)
-	out, err := git(ctx, root, "diff", "--name-only", "--no-renames", mergeBase)
-	if err != nil {
-		return Result{}, err
-	}
-	untracked, err := git(ctx, root, "ls-files", "--others", "--exclude-standard")
-	if err != nil {
-		return Result{}, err
-	}
-	changed := slices.Compact(slices.Sorted(slices.Values(append(lines(out), lines(untracked)...))))
 
 	plugins, err := pluginNames(root)
 	if err != nil {
@@ -128,6 +118,24 @@ func Compute(ctx context.Context, root, base string) (Result, error) {
 	}
 	res.Packages, res.Plugins, res.Contract = nonNil(res.Packages), nonNil(res.Plugins), nonNil(res.Contract)
 	return res, nil
+}
+
+// changedSince returns the merge base of base and HEAD, and the files changed since it, working tree included.
+func changedSince(ctx context.Context, root, base string) (string, []string, error) {
+	mergeBase, err := git(ctx, root, "merge-base", base, "HEAD")
+	if err != nil {
+		return "", nil, err
+	}
+	mergeBase = strings.TrimSpace(mergeBase)
+	out, err := git(ctx, root, "diff", "--name-only", "--no-renames", mergeBase)
+	if err != nil {
+		return "", nil, err
+	}
+	untracked, err := git(ctx, root, "ls-files", "--others", "--exclude-standard")
+	if err != nil {
+		return "", nil, err
+	}
+	return mergeBase, slices.Compact(slices.Sorted(slices.Values(append(lines(out), lines(untracked)...)))), nil
 }
 
 func isHarness(f string) bool {
@@ -299,17 +307,42 @@ func (b build) modules(ctx context.Context, root string) (map[string]string, err
 // affected returns the affected packages of the main module of the build, given the files changed since the checkout
 // of the merge base at baseDir.
 func (b build) affected(ctx context.Context, baseDir string, changed []string) ([]string, error) {
-	nodes, err := b.list(ctx)
+	nodes, code, err := b.code(ctx, baseDir, changed)
 	if err != nil {
 		return nil, err
+	}
+	mainPath := moduleOf(b.dir)
+	var out []string
+	for ip, n := range nodes {
+		// Only the packages of the build's own module: the root module's are tested in its own build, and a change of
+		// their code reaches the plugin's packages through their imports.
+		if n.module == nil || n.module.Path != mainPath {
+			continue
+		}
+		if code[ip] || changedFiles(b.root, n, changed, n.testFiles, false, true) ||
+			slices.ContainsFunc(n.testImports, func(imp string) bool { return code[imp] }) {
+			out = append(out, ip)
+		}
+	}
+	slices.Sort(out)
+	return out, nil
+}
+
+// code returns the packages of the build, and those whose code changed since the checkout of the merge base at
+// baseDir: one of their code files changed, a package their code imports changed code, or the module they belong to
+// changed version in this build.
+func (b build) code(ctx context.Context, baseDir string, changed []string) (map[string]*node, map[string]bool, error) {
+	nodes, err := b.list(ctx)
+	if err != nil {
+		return nil, nil, err
 	}
 	headMods, err := b.modules(ctx, b.root)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	baseMods, err := b.modules(ctx, baseDir)
 	if err != nil {
-		return nil, fmt.Errorf("at the merge base: %w", err)
+		return nil, nil, fmt.Errorf("at the merge base: %w", err)
 	}
 	// The modules of the build whose version changed, and the main modules whose directives changed.
 	moved := map[string]bool{}
@@ -319,33 +352,9 @@ func (b build) affected(ctx context.Context, baseDir string, changed []string) (
 		}
 	}
 
-	// changedFiles reports whether a file of files in the package's directory, or of its testdata/ with testdata,
-	// changed; or, with goFiles, a Go file of the directory that no longer exists.
-	changedFiles := func(n *node, files []string, goFiles, testdata bool) bool {
-		if n.dir == "" {
-			return false
-		}
-		rel, err := filepath.Rel(b.root, n.dir)
-		if err != nil || strings.HasPrefix(rel, "..") {
-			return false // outside the repository
-		}
-		rel = filepath.ToSlash(rel)
-		for _, f := range changed {
-			switch {
-			case path.Dir(f) == rel && slices.Contains(files, path.Base(f)):
-				return true
-			case goFiles && path.Dir(f) == rel && path.Ext(f) == ".go" && !strings.HasSuffix(f, "_test.go"):
-				return true // a deleted file of the package's code
-			case testdata && (strings.HasPrefix(f, rel+"/testdata/") || path.Dir(f) == rel && strings.HasSuffix(f, "_test.go")):
-				return true // a file of its testdata, or a deleted test file
-			}
-		}
-		return false
-	}
-
 	code := map[string]bool{}
 	for ip, n := range nodes {
-		if n.module != nil && moved[n.module.Path] || changedFiles(n, n.codeFiles, true, false) {
+		if n.module != nil && moved[n.module.Path] || changedFiles(b.root, n, changed, n.codeFiles, true, false) {
 			code[ip] = true
 		}
 	}
@@ -358,22 +367,40 @@ func (b build) affected(ctx context.Context, baseDir string, changed []string) (
 			}
 		}
 	}
+	return nodes, code, nil
+}
 
-	mainPath := moduleOf(b.dir)
-	var out []string
-	for ip, n := range nodes {
-		// Only the packages of the build's own module: the root module's are tested in its own build, and a change of
-		// their code reaches the plugin's packages through their imports.
-		if n.module == nil || n.module.Path != mainPath {
-			continue
-		}
-		if code[ip] || changedFiles(n, n.testFiles, false, true) ||
-			slices.ContainsFunc(n.testImports, func(imp string) bool { return code[imp] }) {
-			out = append(out, ip)
+// changedFiles reports whether a file of files in the directory of the package, in the repository at root, or of its
+// testdata/ with testdata, is among changed; or, with goFiles, a Go file of the directory that no longer exists.
+func changedFiles(root string, n *node, changed, files []string, goFiles, testdata bool) bool {
+	rel, ok := repoDir(root, n)
+	if !ok {
+		return false
+	}
+	for _, f := range changed {
+		switch {
+		case path.Dir(f) == rel && slices.Contains(files, path.Base(f)):
+			return true
+		case goFiles && path.Dir(f) == rel && path.Ext(f) == ".go" && !strings.HasSuffix(f, "_test.go"):
+			return true // a deleted file of the package's code
+		case testdata && (strings.HasPrefix(f, rel+"/testdata/") || path.Dir(f) == rel && strings.HasSuffix(f, "_test.go")):
+			return true // a file of its testdata, or a deleted test file
 		}
 	}
-	slices.Sort(out)
-	return out, nil
+	return false
+}
+
+// repoDir returns the directory of the package relative to the repository at root, with slashes, and whether it is in
+// the repository at all.
+func repoDir(root string, n *node) (string, bool) {
+	if n.dir == "" {
+		return "", false
+	}
+	rel, err := filepath.Rel(root, n.dir)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", false // outside the repository
+	}
+	return filepath.ToSlash(rel), true
 }
 
 func moduleOf(dir string) string {
