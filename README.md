@@ -5,6 +5,7 @@ Official plugins of [mycroblog/my](https://github.com/mycroblog/my). See [Plugin
 | Plugin | Kind | Implements |
 |---|---|---|
 | [my-media-imagemagick](plugins/my-media-imagemagick) | `media_image` | `MediaService.Process` with ImageMagick |
+| [my-media-libvips](plugins/my-media-libvips) | `media_image` | `MediaService.Process` with libvips |
 | [my-media-ffmpeg](plugins/my-media-ffmpeg) | `media_video`, `media_audio` | `MediaService.Remux` with ffmpeg |
 
 Each plugin's README says how to run it and what it does. Every plugin also serves the probe kind, so `my plugin test --kind probe <address>` checks it before anything else.
@@ -38,7 +39,7 @@ Go is pinned in `.tool-versions`.
 ```sh
 GOWORK=off go test ./...                                # the root module
 (cd plugins/my-media-ffmpeg && GOWORK=off go test ./...) # a plugin; its integration tests need its tools, or its image
-./scripts/lint.sh                                       # everything CI checks statically
+./scripts/lint.sh                                       # everything CI checks statically; needs libvips-dev (cgo)
 ./scripts/tidy.sh                                       # tidy every module, after changing a dependency
 ```
 
